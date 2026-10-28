@@ -11,35 +11,35 @@ spec:
   rules:
     - http:
         paths:
-          - path: /auth-service(/|$)(.*)
+          - path: /auth(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: auth-service
                 port:
                   number: 8001
-          - path: /flag-service(/|$)(.*)
+          - path: /flag(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: flag-service
                 port:
                   number: 8002
-          - path: /targeting-service(/|$)(.*)
+          - path: /targeting(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: targeting-service
                 port:
                   number: 8003
-          - path: /evaluation-service(/|$)(.*)
+          - path: /evaluation(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: evaluation-service
                 port:
                   number: 8004
-          - path: /analytics-service(/|$)(.*)
+          - path: /analytics(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:

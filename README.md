@@ -64,6 +64,33 @@ kubectl get service argocd-server -n argocd
 
 Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no navegador. A configuração atual usa `LoadBalancer` e HTTP, sem TLS.
 
+## Requisições HTTP aos endpoints
+
+O módulo `scripts/validate_endpoints.py` fornece a função reutilizável
+`make_request` para enviar requisições HTTP com `requests`. Instale a dependência:
+
+```bash
+python -m pip install -r scripts/requirements.txt
+```
+
+Exemplo de uso:
+
+```python
+from scripts.validate_endpoints import make_request
+
+response = make_request(
+    "GET",
+    "http://<ENDERECO-DO-INGRESS>/auth-service/health",
+    timeout=10,
+)
+print(response.status_code)
+print(response.json())
+```
+
+A função também aceita `headers`, `params` e `json_body`. Ela retorna a resposta
+sem assumir quais códigos HTTP são sucesso; quem chama decide como tratar o
+status. Erros de conexão e timeout são propagados pelo `requests`.
+
 Configure no repositório GitOps:
 
 ### Variables
