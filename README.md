@@ -39,6 +39,31 @@ O workflow `.github/workflows/gitops.yml` pode ser executado em **Actions > GitO
 
 O workflow GitOps não instala charts nem executa Helm. Para criar ou atualizar os charts, execute o workflow Terraform em **Actions > Terraform CI > Run workflow** com `apply=true`. Ele aplica primeiro a infraestrutura e depois os charts em um state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
 
+## Acesso à interface do Argo CD
+
+O usuário inicial padrão do Argo CD é `admin`. Para consultar a senha inicial no PowerShell, configure primeiro o `kubectl` para o cluster EKS e execute:
+
+```powershell
+$encodedPassword = kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}'
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($encodedPassword))
+```
+
+No Linux, use:
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+O comando decodifica o valor do Secret localmente; não publique nem compartilhe a senha. O Secret `argocd-initial-admin-secret` pode deixar de existir depois que a senha inicial for alterada. Se ele não for encontrado, use o procedimento de redefinição de senha documentado pelo Argo CD.
+
+Para consultar o endereço externo provisionado para o Argo CD:
+
+```powershell
+kubectl get service argocd-server -n argocd
+```
+
+Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no navegador. A configuração atual usa `LoadBalancer` e HTTP, sem TLS.
+
 Configure no repositório GitOps:
 
 ### Variables
