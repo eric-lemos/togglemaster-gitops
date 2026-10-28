@@ -1,6 +1,6 @@
 # ToggleMaster GitOps
 
-Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Argo CD e o Metrics Server no cluster; esta aplicação é registrada no Argo CD uma única vez:
+Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow GitOps:
 
 ```bash
 kubectl apply -f argocd/application.yaml
@@ -32,15 +32,12 @@ Os nodes do EKS precisam conseguir fazer pull dos repositórios privados ECR. A 
 
 ## Workflow manual
 
-O workflow `.github/workflows/gitops.yml` pode ser executado em **Actions > K8s Utils > Run workflow** com quatro inputs independentes:
+O workflow `.github/workflows/gitops.yml` pode ser executado em **Actions > GitOps > Run workflow** com dois inputs independentes:
 
-- `K8s Apply`: aplica a raiz Kustomize (`kubectl apply -k .`).
+- `Kubernetes Apply`: prepara os secrets de runtime e aplica os manifests Kubernetes e a Application do Argo CD.
 - `Run Postgres Schema Job`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
-- O job `deploy` também verifica e instala o Ingress NGINX como Service `LoadBalancer` antes de aplicar os manifests.
-- `Install Metrics Server`: instala ou atualiza o chart do Metrics Server via Helm.
-- `Install ArgoCD`: instala ou atualiza o chart do Argo CD, cria o Service `LoadBalancer` e registra a Application GitOps.
 
-Os charts usam `helm upgrade --install`, portanto a mesma execução pode ser repetida com segurança. O Metrics Server é instalado com `--kubelet-insecure-tls`, necessário para clusters EKS em que o certificado apresentado pelo kubelet não é confiável pelo componente.
+O workflow GitOps não instala charts nem executa Helm. Para criar ou atualizar os charts, execute o workflow Terraform em **Actions > Terraform CI > Run workflow** com `apply=true`. Ele aplica primeiro a infraestrutura e depois os charts em um state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
 
 Configure no repositório GitOps:
 
