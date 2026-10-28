@@ -66,8 +66,23 @@ Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no nave
 
 ## Requisições HTTP aos endpoints
 
-O módulo `scripts/validate_endpoints.py` fornece a função reutilizável
-`make_request` para enviar requisições HTTP com `requests`. Instale a dependência:
+O Ingress expõe cada serviço usando um prefixo curto e remove esse prefixo antes
+de encaminhar a requisição ao serviço:
+
+| Prefixo público | Serviço | Exemplos de endpoints |
+| --- | --- | --- |
+| `/auth` | `auth-service` | `GET /auth/health`, `GET /auth/validate`, `POST /auth/admin/keys` |
+| `/flag` | `flag-service` | `GET /flag/health`, `GET /flag/flags`, `POST /flag/flags`, `GET /flag/flags/{name}` |
+| `/targeting` | `targeting-service` | `GET /targeting/health`, `POST /targeting/rules`, `GET /targeting/rules/{flag_name}` |
+| `/evaluation` | `evaluation-service` | `GET /evaluation/health`, `GET /evaluation/evaluate?user_id=...&flag_name=...` |
+| `/analytics` | `analytics-service` | `GET /analytics/health` |
+
+O `analytics-service` é um worker de eventos; seu endpoint HTTP é apenas o health
+check. As operações de criação e alteração de flags e regras exigem uma API key
+no cabeçalho de autorização. O endpoint administrativo
+`POST /auth/admin/keys` exige a chave mestra configurada no serviço.
+
+Para fazer requisições com `requests`, instale a dependência:
 
 ```bash
 python -m pip install -r scripts/requirements.txt
@@ -76,20 +91,16 @@ python -m pip install -r scripts/requirements.txt
 Exemplo de uso:
 
 ```python
-from scripts.validate_endpoints import make_request
+import requests
 
-response = make_request(
-    "GET",
-    "http://<ENDERECO-DO-INGRESS>/auth-service/health",
-    timeout=10,
-)
+base_url = "http://<ENDERECO-EXTERNO-DO-INGRESS>"
+response = requests.get(f"{base_url}/auth/health", timeout=10)
 print(response.status_code)
 print(response.json())
 ```
 
-A função também aceita `headers`, `params` e `json_body`. Ela retorna a resposta
-sem assumir quais códigos HTTP são sucesso; quem chama decide como tratar o
-status. Erros de conexão e timeout são propagados pelo `requests`.
+Consulte as rotas acima para usar o prefixo público correspondente ao serviço;
+por exemplo, o health do Auth é `/auth/health` (não `/auth-service/health`).
 
 Configure no repositório GitOps:
 

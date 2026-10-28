@@ -18,7 +18,7 @@ spec:
                 name: auth-service
                 port:
                   number: 8001
-          - path: /flag(/|$)(.*)
+          - path: /flags(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
