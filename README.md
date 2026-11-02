@@ -66,6 +66,39 @@ Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no nave
 
 ## Requisições HTTP aos endpoints
 
+### Atualizacao da chave durante o teste local
+
+O script `scripts/validate_apps.py` executa `update_key_on_k8s` depois de
+`update_rule`, antes das avaliacoes. Ele usa a API key criada pelo teste para
+criar ou atualizar `togglemaster-runtime/SERVICE_API_KEY` no namespace
+`togglemaster`, reinicia o Deployment `evaluation-service` e aguarda o rollout
+por ate 120 segundos. Se alguma etapa falhar, o teste e interrompido.
+
+Esse teste altera o cluster do contexto atual do `kubectl` e a chave usada por
+todas as replicas do evaluation-service. Confira `kubectl config current-context`
+antes de executar. E necessario ter permissao para criar/atualizar Secrets,
+reiniciar o Deployment e acompanhar o rollout. A chave nao e salva em arquivo
+local nem passada nos argumentos do comando. Nao execute em producao.
+
+Ao terminar os testes, `show_cache_hits` consulta os logs dos ultimos 10 minutos
+de todos os pods com o label `app=evaluation-service` usando `kubectl logs` e
+exibe apenas os `Cache HIT` da flag criada pelo teste. A leitura exige permissao
+para listar pods e acessar seus logs. Se nenhum registro for encontrado, exibe
+um aviso; falhas do comando interrompem o teste.
+
+Depois das avaliacoes, `check_dynamodb()` usa a AWS CLI para listar os eventos
+da flag criada pelo teste na tabela `ToggleMasterAnalytics` em `us-east-1`.
+Exibe JSON sem os marcadores de tipo do DynamoDB, por timestamp decrescente.
+Requer AWS CLI instalada, credenciais locais e permissao `dynamodb:Scan`.
+O scan percorre a tabela inteira (com paginacao automatica), mesmo com filtro;
+use apenas em tabelas pequenas de teste. A consulta tem timeout de 60 segundos.
+Como o processamento SQS e assincrono, uma consulta vazia gera aviso; para
+consultar novamente, use `validator.check_dynamodb()` na mesma instancia.
+Tabela e regiao podem ser alteradas pelos argumentos `table_name` e `region`.
+O validador nao consulta a SQS diretamente: registros da flag criada nesta
+execucao no DynamoDB evidenciam o fluxo evaluation-service -> SQS ->
+analytics-service -> DynamoDB. Isso nao comprova a exclusao das mensagens da fila.
+
 O Ingress expõe cada serviço usando um prefixo curto e remove esse prefixo antes
 de encaminhar a requisição ao serviço:
 
