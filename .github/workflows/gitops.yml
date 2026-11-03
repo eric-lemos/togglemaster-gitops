@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       kubernetes_apply:
-        description: "Kubernetes Apply"
+        description: "K8s Apply"
         required: true
         default: false
         type: boolean
       run_postgres_schema_job:
-        description: "Config DB Schema"
+        description: "Postgres Schema"
         required: true
         default: false
         type: boolean
       validate_apps:
-        description: "Validate Apps"
+        description: "Validate Togglemaster"
         required: true
         default: false
         type: boolean
@@ -32,7 +32,7 @@ env:
 
 jobs:
   deploy:
-    name: Kubernetes Apply
+    name: K8s Apply
     runs-on: ubuntu-latest
     if: inputs.kubernetes_apply
     steps:
@@ -96,7 +96,7 @@ jobs:
           kubectl apply -f argocd/application.yaml
 
   config:
-    name: Config DB Schema
+    name: Postgres Schema
     runs-on: ubuntu-latest
     if: inputs.run_postgres_schema_job
     steps:
@@ -170,7 +170,7 @@ jobs:
             job/postgres-schema-init
 
   validate:
-    name: Validate Apps
+    name: Validate Togglemaster
     runs-on: ubuntu-latest
     needs: [deploy, config]
     if: ${{ !cancelled() && inputs.validate_apps && !contains(needs.*.result, 'failure') }}
