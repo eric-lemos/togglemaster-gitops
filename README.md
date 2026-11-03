@@ -66,6 +66,25 @@ Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no nave
 
 ## Requisições HTTP aos endpoints
 
+### Execucao do validador
+
+```bash
+pip install -r scripts/requirements.txt
+python3 scripts/validate_apps.py                       # descobre o ingress via kubectl
+python3 scripts/validate_apps.py --base-url http://<ENDERECO-DO-INGRESS>
+```
+
+Sem `--base-url` (ou a variavel `TOGGLEMASTER_BASE_URL`), o script le
+`status.loadBalancer` do Ingress `togglemaster/togglemaster-ingress` e aguarda
+ate 300 segundos (`--ingress-timeout`) o endereco do ELB existir e resolver no
+DNS. A chave mestra vem da variavel `MASTER_KEY`; sem ela, usa `togglemaster`.
+
+No workflow **GitOps**, marque `Validate Apps` para executar o mesmo script no
+GitHub Actions. O job roda depois de `Kubernetes Apply` e/ou do job de schema
+quando marcados (e e pulado se algum deles falhar), aguarda o rollout de todos
+os Deployments do namespace `togglemaster` e usa o secret `MASTER_KEY` do
+repositorio. A API key criada pelo teste e mascarada no log do Actions.
+
 ### Atualizacao da chave durante o teste local
 
 O script `scripts/validate_apps.py` executa `update_key_on_k8s` depois de
@@ -81,7 +100,7 @@ reiniciar o Deployment e acompanhar o rollout. A chave nao e salva em arquivo
 local nem passada nos argumentos do comando. Nao execute em producao.
 
 Ao terminar os testes, `show_cache_hits` consulta os logs dos ultimos 10 minutos
-de todos os pods com o label `app=evaluation-service` usando `kubectl logs` e
+de todos os pods em `Running` com o label `app=evaluation-service` usando `kubectl logs` e
 exibe apenas os `Cache HIT` da flag criada pelo teste. A leitura exige permissao
 para listar pods e acessar seus logs. Se nenhum registro for encontrado, exibe
 um aviso; falhas do comando interrompem o teste.

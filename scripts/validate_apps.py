@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
+import os
 import sys
+import socket
+import argparse
 import base64
 import requests
 import subprocess
@@ -124,8 +127,10 @@ class Validator:
             body = {"name": f"apikey-{secrets.token_hex(12)}"}
             response = self.request("POST", endpoint, headers=headers, body=body)
             if(response.status_code == 201): 
-                self.success(endpoint, response)
                 self.api_key = response.json().get("key")
+                if self.api_key and os.environ.get("GITHUB_ACTIONS") == "true":
+                    print(f"::add-mask::{self.api_key}")
+                self.success(endpoint, response)
             else: self.fail(endpoint, response)
         else:
             print(f"[{g}OK{_}] API key is already set")
@@ -315,17 +320,25 @@ class Validator:
             print(f"[{r}ERROR{_}] No flag created to check cache logs")
             sys.exit(1)
 
-        command = [
-            "kubectl", "logs", "--namespace", "togglemaster",
-            "-l", "app=evaluation-service", "--since=10m",
-            "--tail=-1", "--prefix=true", "--request-timeout=30s",
-        ]
+        # Pods left on terminated nodes (e.g. NodeShutdown) make "kubectl logs -l" fail as a whole.
+        pods = subprocess.run(
+            ["kubectl", "get", "pods", "--namespace", "togglemaster", "-l", "app=evaluation-service",
+             "--field-selector=status.phase=Running", "--output", "name", "--request-timeout=30s"],
+            capture_output=True, text=True, check=True, timeout=45,
+        ).stdout.split()
 
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=45)
-        if result.stderr.strip(): print(f"[{y}WARNING{_}] {result.stderr.strip()}")
+        output = []
+        for pod in pods:
+            result = subprocess.run(
+                ["kubectl", "logs", "--namespace", "togglemaster", pod, "--since=10m",
+                 "--tail=-1", "--prefix=true", "--request-timeout=30s"],
+                capture_output=True, text=True, timeout=45,
+            )
+            if result.returncode == 0: output.extend(result.stdout.splitlines())
+            else: print(f"[{y}WARNING{_}] Unable to read logs from {pod}: {result.stderr.strip()}")
 
         hits = [
-            line for line in result.stdout.splitlines()
+            line for line in output
             if f"Cache HIT para flag '{self.created_flag}'" in line
         ]
 
@@ -403,7 +416,7 @@ class Validator:
         self.display_title(self.titles["check_dynamodb"]); self.set_delay(self.check_dynamodb, 1)
 
     def run_tests(self) -> None:
-        subprocess.run(["clear"])
+        if sys.stdout.isatty() and os.environ.get("TERM"): subprocess.run(["clear"])
         print(f"\n*** {b}Starting validation of Togglemaster applications{_} ***"); time.sleep(1)
         self.display_health()
         self.display_auth()
@@ -413,7 +426,53 @@ class Validator:
         self.display_analytics()
         print(f"\n*** {b}Validation of Togglemaster applications completed{_} ***"); time.sleep(1)
 
+def resolve_base_url(namespace: str = "togglemaster", ingress: str = "togglemaster-ingress", timeout: float = 300) -> str:
+    """Return the public URL of the ingress, waiting for the load balancer address and its DNS."""
+    command = [
+        "kubectl", "get", "ingress", ingress, "--namespace", namespace, "--request-timeout=30s",
+        "--output", "jsonpath={.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}",
+    ]
+    deadline = time.monotonic() + timeout
+    address, last_error = "", ""
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=45)
+        except FileNotFoundError:
+            print(f"[{r}ERROR{_}] kubectl was not found. Install it or pass --base-url.")
+            sys.exit(1)
+        except subprocess.TimeoutExpired:
+            result = None
+        if result is not None and result.returncode == 0:
+            address = result.stdout.strip()
+        elif result is not None:
+            last_error = (result.stderr or result.stdout).strip()
+        if address:
+            try:
+                socket.getaddrinfo(address, 80)
+                return f"http://{address}"
+            except socket.gaierror as error:
+                last_error = f"DNS for {address} is not resolvable yet: {error}"
+        time.sleep(10)
+
+    print(f"[{r}ERROR{_}] Unable to resolve ingress {b}{namespace}/{ingress}{_} within {int(timeout)}s")
+    if last_error: print(f"        {b}Reason:{_} {last_error}")
+    sys.exit(1)
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="End-to-end validation of the ToggleMaster applications.")
+    parser.add_argument("--base-url", default=os.environ.get("TOGGLEMASTER_BASE_URL"),
+        help="Ingress URL (default: TOGGLEMASTER_BASE_URL or discovered with kubectl)")
+    parser.add_argument("--namespace", default="togglemaster", help="Namespace of the ingress (default: togglemaster)")
+    parser.add_argument("--ingress", default="togglemaster-ingress", help="Ingress name (default: togglemaster-ingress)")
+    parser.add_argument("--ingress-timeout", type=float, default=300,
+        help="Seconds to wait for the ingress address and DNS (default: 300)")
+    return parser.parse_args(argv)
+
 if __name__ == "__main__":
-    v = Validator(
-        base_url="http://a4468981d15cb4cf0a096121abde47ad-447831217.us-east-1.elb.amazonaws.com"
+    args = parse_args()
+    base_url = (args.base_url or resolve_base_url(args.namespace, args.ingress, args.ingress_timeout)).rstrip("/")
+    print(f"[{g}OK{_}] Using ingress {b}{base_url}{_}")
+    Validator(
+        base_url=base_url,
+        master_key=os.environ.get("MASTER_KEY") or "togglemaster",
     ).run_tests()
