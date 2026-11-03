@@ -172,7 +172,7 @@ jobs:
   validate:
     name: Validate Apps
     runs-on: ubuntu-latest
-    needs: [deploy, utils]
+    needs: [deploy, config]
     if: ${{ !cancelled() && inputs.validate_apps && !contains(needs.*.result, 'failure') }}
     steps:
       - name: Checkout GitOps repository
