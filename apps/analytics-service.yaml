@@ -38,6 +38,8 @@ spec:
               value: "15000"
             - name: OTEL_SEMCONV_STABILITY_OPT_IN
               value: http
+            - name: OTEL_PYTHON_FLASK_EXCLUDED_URLS
+              value: health
             - name: PORT
               value: "8005"
             - name: AWS_DYNAMODB_TABLE
