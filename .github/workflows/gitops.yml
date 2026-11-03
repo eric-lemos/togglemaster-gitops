@@ -32,7 +32,7 @@ env:
 
 jobs:
   deploy:
-    name: Deploy
+    name: Kubernetes Apply
     runs-on: ubuntu-latest
     if: inputs.kubernetes_apply
     steps:
@@ -95,8 +95,8 @@ jobs:
           kubectl apply -k .
           kubectl apply -f argocd/application.yaml
 
-  utils:
-    name: Utils
+  config:
+    name: Config DB Schema
     runs-on: ubuntu-latest
     if: inputs.run_postgres_schema_job
     steps:
