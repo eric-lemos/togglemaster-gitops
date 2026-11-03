@@ -20,6 +20,22 @@ spec:
           ports:
             - containerPort: 8001
           env:
+            - name: OTEL_SERVICE_NAME
+              value: auth-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-gateway.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+            - name: OTEL_TRACES_EXPORTER
+              value: none
+            - name: OTEL_LOGS_EXPORTER
+              value: none
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "15000"
+            - name: OTEL_SEMCONV_STABILITY_OPT_IN
+              value: http
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

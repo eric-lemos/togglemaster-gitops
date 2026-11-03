@@ -191,3 +191,18 @@ REDIS_URL=redis://:REPLACE_WITH_REDIS_TOKEN@togglemaster-redis.example.cache.ama
 ```
 
 Se o Redis exigir TLS, use `rediss://` no lugar de `redis://`. Caracteres especiais em usuários ou senhas devem ser URL-encoded, por exemplo `@` como `%40` e `#` como `%23`. Nunca versione esses valores no repositório.
+
+## Telemetria OpenTelemetry
+
+Os cinco serviços enviam métricas por OTLP/gRPC para `otel-gateway.observability`
+(`OTEL_EXPORTER_OTLP_ENDPOINT`), que as expõe ao Prometheus. O nome do serviço
+vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
+
+- Traces e logs ficam desligados nos manifests (`OTEL_TRACES_EXPORTER=none` e
+  `OTEL_LOGS_EXPORTER=none`). Os logs já chegam ao Loki pelo agent.
+- Para ativar traces depois do APM, altere `OTEL_TRACES_EXPORTER` e habilite o
+  pipeline de traces no `otel-gateway` (repositório Terraform).
+- O evaluation-service grava o contexto de trace nos atributos das mensagens SQS
+  e o analytics-service o lê, para o fluxo aparecer como um único trace.
+- Os serviços Python usam `opentelemetry-instrument` via `gunicorn.conf.py`; os
+  serviços Go usam `otel.go` com `otelhttp`.
