@@ -120,6 +120,24 @@ class Validator:
             else: self.fail(endpoint, response)
             time.sleep(0.25)
 
+    def show_pods(self) -> None:
+        command = ["kubectl", "get", "pods", "--namespace", "togglemaster", "--request-timeout=30s"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=45)
+        except FileNotFoundError:
+            print(f"[{r}ERROR{_}] kubectl was not found. Install it and configure access to the test cluster.")
+            sys.exit(1)
+        except subprocess.TimeoutExpired:
+            print(f"[{r}ERROR{_}] Kubernetes command timed out: {' '.join(command)}")
+            sys.exit(1)
+        except subprocess.CalledProcessError as error:
+            details = (error.stderr or error.stdout or "No error details returned").strip()
+            print(f"[{r}ERROR{_}] Unable to retrieve pod status: {details}")
+            sys.exit(1)
+
+        if result.stderr.strip(): print(f"[{y}WARNING{_}] {result.stderr.strip()}")
+        print(result.stdout.strip())
+
     def create_key(self) -> None:
         if self.api_key is None:
             endpoint = f"/auth-service/admin/keys"
@@ -389,7 +407,7 @@ class Validator:
     #######################################################
     def display_health(self) -> None:
         self.display_title(self.titles["check_health"]); self.check_health()
-        self.display_subtitle(self.subtitles["check_health"])
+        self.display_subtitle(self.subtitles["check_health"]); self.show_pods()
 
     def display_auth(self) -> None:
         self.display_title(self.titles["create_key"]); self.set_delay(self.create_key, 1)
