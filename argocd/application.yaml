@@ -12,9 +12,18 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: togglemaster
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: auth-service
+      namespace: togglemaster
+      jsonPointers:
+        - /metadata/annotations/togglemaster.io~1self-healing-history
+        - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true

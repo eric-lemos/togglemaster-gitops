@@ -206,4 +206,39 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
   e o analytics-service o lê, para o fluxo aparecer como um único trace.
 - Os serviços Python usam `opentelemetry-instrument` via `gunicorn.conf.py`; os
   serviços Go usam `otel.go` com `otelhttp`.
+
+## Self-healing do auth-service
+
+O CronJob `auth-self-healing` consulta o Prometheus a cada minuto. Enquanto
+`ToggleMasterAuthHighErrorRate` estiver em `Firing`, ele solicita um rollout do
+Deployment `auth-service`, no máximo uma vez a cada 15 minutos e três vezes
+em uma janela móvel de uma hora. O histórico fica em uma annotation do
+Deployment e é atualizado junto com o pedido de restart; conflitos de versão,
+histórico inválido ou falhas de acesso interrompem o Job e ficam em seus logs.
+A política de `ignoreDifferences` do Argo CD preserva esse histórico e a
+annotation de restart durante a sincronização. Se o próprio Deployment for
+excluído e recriado, o histórico é perdido e os limites recomeçam.
+
+O ServiceAccount tem permissão para ler e alterar apenas esse Deployment.
+O Job não expõe webhook nem recebe comandos externos. Um alerta sintético
+inserido somente no Alertmanager não dispara a automação: ela consulta o estado
+da regra no Prometheus. A ausência de dados no Prometheus não comprova que o
+serviço está saudável. O restart é apenas uma tentativa de mitigação e não
+corrige necessariamente a causa raiz.
+
+Após sincronizar o GitOps, consulte as execuções:
+
+```bash
+kubectl -n togglemaster get cronjob auth-self-healing
+kubectl -n togglemaster get jobs | grep auth-self-healing
+kubectl -n togglemaster logs job/<NOME-DO-JOB>
+kubectl -n togglemaster rollout status deployment/auth-service
+```
+
+Uma solicitação de restart nos logs não garante que o rollout terminou ou que o
+alerta foi resolvido; confira o rollout, o Prometheus e o incidente. Para
+desativar temporariamente a automação, suspenda o CronJob; como o Argo CD
+sincroniza o manifesto automaticamente, registre a suspensão no Git para que
+seja persistente. O fluxo precisa ser testado com falha controlada antes da
+demonstração, e o professor deve confirmar que o CronJob atende ao requisito.
   
