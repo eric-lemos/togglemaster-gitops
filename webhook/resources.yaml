@@ -20,7 +20,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: webhook
-          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/webhook:bf26eaacf0a2fd9d8371d1c32b95bcb648c5ecb5
+          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/webhook:844a67fcbe49e07818de1718455e3b89dd254caf
           ports:
             - containerPort: 8443
           env:
