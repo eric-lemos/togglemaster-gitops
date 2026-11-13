@@ -209,7 +209,8 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
 
 ## Self-healing do auth-service
 
-O CronJob `auth-self-healing` consulta o Prometheus a cada minuto. Enquanto
+O CronJob `auth-self-healing` está suspenso durante a mudança para uma
+automação via GitHub Actions. Quando ativo, ele consulta o Prometheus a cada minuto. Enquanto
 `ToggleMasterAuthHighErrorRate` estiver em `Firing`, ele solicita um rollout do
 Deployment `auth-service`, no máximo uma vez a cada 15 minutos e três vezes
 em uma janela móvel de uma hora. O histórico fica em uma annotation do
