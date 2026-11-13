@@ -206,3 +206,4 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
   e o analytics-service o lê, para o fluxo aparecer como um único trace.
 - Os serviços Python usam `opentelemetry-instrument` via `gunicorn.conf.py`; os
   serviços Go usam `otel.go` com `otelhttp`.
+  
