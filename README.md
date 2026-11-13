@@ -66,7 +66,7 @@ Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no nave
 
 ## Requisições HTTP aos endpoints
 
-### Execucao do validador
+### Execução do validador
 
 ```bash
 pip install -r scripts/requirements.txt
@@ -74,49 +74,49 @@ python3 scripts/validate_apps.py                       # descobre o ingress via 
 python3 scripts/validate_apps.py --base-url http://<ENDERECO-DO-INGRESS>
 ```
 
-Sem `--base-url` (ou a variavel `TOGGLEMASTER_BASE_URL`), o script le
+Sem `--base-url` (ou a variável `TOGGLEMASTER_BASE_URL`), o script lê
 `status.loadBalancer` do Ingress `togglemaster/togglemaster-ingress` e aguarda
-ate 300 segundos (`--ingress-timeout`) o endereco do ELB existir e resolver no
-DNS. A chave mestra vem da variavel `MASTER_KEY`; sem ela, usa `togglemaster`.
+até 300 segundos (`--ingress-timeout`) o endereço do ELB existir e resolver no
+DNS. A chave mestra vem da variável `MASTER_KEY`; sem ela, usa `togglemaster`.
 
 No workflow **GitOps**, marque `Validate Apps` para executar o mesmo script no
 GitHub Actions. O job roda depois de `Kubernetes Apply` e/ou do job de schema
-quando marcados (e e pulado se algum deles falhar), aguarda o rollout de todos
+quando marcados (e é pulado se algum deles falhar), aguarda o rollout de todos
 os Deployments do namespace `togglemaster` e usa o secret `MASTER_KEY` do
-repositorio. A API key criada pelo teste e mascarada no log do Actions.
+repositório. A API key criada pelo teste é mascarada no log do Actions.
 
-### Atualizacao da chave durante o teste local
+### Atualização da chave durante o teste local
 
 O script `scripts/validate_apps.py` executa `update_key_on_k8s` depois de
-`update_rule`, antes das avaliacoes. Ele usa a API key criada pelo teste para
+`update_rule`, antes das avaliações. Ele usa a API key criada pelo teste para
 criar ou atualizar `togglemaster-runtime/SERVICE_API_KEY` no namespace
 `togglemaster`, reinicia o Deployment `evaluation-service` e aguarda o rollout
-por ate 120 segundos. Se alguma etapa falhar, o teste e interrompido.
+por até 120 segundos. Se alguma etapa falhar, o teste é interrompido.
 
 Esse teste altera o cluster do contexto atual do `kubectl` e a chave usada por
-todas as replicas do evaluation-service. Confira `kubectl config current-context`
-antes de executar. E necessario ter permissao para criar/atualizar Secrets,
-reiniciar o Deployment e acompanhar o rollout. A chave nao e salva em arquivo
-local nem passada nos argumentos do comando. Nao execute em producao.
+todas as réplicas do evaluation-service. Confira `kubectl config current-context`
+antes de executar. É necessário ter permissão para criar/atualizar Secrets,
+reiniciar o Deployment e acompanhar o rollout. A chave não é salva em arquivo
+local nem passada nos argumentos do comando. Não execute em produção.
 
-Ao terminar os testes, `show_cache_hits` consulta os logs dos ultimos 10 minutos
+Ao terminar os testes, `show_cache_hits` consulta os logs dos últimos 10 minutos
 de todos os pods em `Running` com o label `app=evaluation-service` usando `kubectl logs` e
-exibe apenas os `Cache HIT` da flag criada pelo teste. A leitura exige permissao
+exibe apenas os `Cache HIT` da flag criada pelo teste. A leitura exige permissão
 para listar pods e acessar seus logs. Se nenhum registro for encontrado, exibe
 um aviso; falhas do comando interrompem o teste.
 
-Depois das avaliacoes, `check_dynamodb()` usa a AWS CLI para listar os eventos
+Depois das avaliações, `check_dynamodb()` usa a AWS CLI para listar os eventos
 da flag criada pelo teste na tabela `ToggleMasterAnalytics` em `us-east-1`.
 Exibe JSON sem os marcadores de tipo do DynamoDB, por timestamp decrescente.
-Requer AWS CLI instalada, credenciais locais e permissao `dynamodb:Scan`.
-O scan percorre a tabela inteira (com paginacao automatica), mesmo com filtro;
+Requer AWS CLI instalada, credenciais locais e permissão `dynamodb:Scan`.
+O scan percorre a tabela inteira (com paginação automática), mesmo com filtro;
 use apenas em tabelas pequenas de teste. A consulta tem timeout de 60 segundos.
-Como o processamento SQS e assincrono, uma consulta vazia gera aviso; para
-consultar novamente, use `validator.check_dynamodb()` na mesma instancia.
-Tabela e regiao podem ser alteradas pelos argumentos `table_name` e `region`.
-O validador nao consulta a SQS diretamente: registros da flag criada nesta
-execucao no DynamoDB evidenciam o fluxo evaluation-service -> SQS ->
-analytics-service -> DynamoDB. Isso nao comprova a exclusao das mensagens da fila.
+Como o processamento SQS é assíncrono, uma consulta vazia gera aviso; para
+consultar novamente, use `validator.check_dynamodb()` na mesma instância.
+Tabela e região podem ser alteradas pelos argumentos `table_name` e `region`.
+O validador não consulta a SQS diretamente: registros da flag criada nesta
+execução no DynamoDB evidenciam o fluxo evaluation-service -> SQS ->
+analytics-service -> DynamoDB. Isso não comprova a exclusão das mensagens da fila.
 
 O Ingress expõe cada serviço usando um prefixo curto e remove esse prefixo antes
 de encaminhar a requisição ao serviço:
