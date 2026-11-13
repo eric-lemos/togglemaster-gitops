@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: webhook
 spec:
-  replicas: 0
+  replicas: 1
   selector:
     matchLabels:
       app: webhook
@@ -20,7 +20,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: webhook
-          image: REPLACE_WITH_PUBLISHED_IMAGE
+          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/webhook:bf26eaacf0a2fd9d8371d1c32b95bcb648c5ecb5
           ports:
             - containerPort: 8443
           env:

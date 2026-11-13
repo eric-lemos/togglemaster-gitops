@@ -25,9 +25,16 @@ jobs:
   build-image:
     if: github.ref == 'refs/heads/main' && inputs.operation == 'build-image'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: webhook-image
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - name: Build image
         run: docker build -t webhook:"$GITHUB_SHA" webhook
       - name: Configure AWS credentials
@@ -55,6 +62,46 @@ jobs:
             docker push "$image"
           fi
           echo "Published image: $image"
+      - name: Update webhook manifest
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/togglemaster/webhook:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "The build revision is no longer an ancestor of main; rerun the workflow." >&2
+            exit 1
+          fi
+          if ! git diff --quiet "$GITHUB_SHA" origin/main -- webhook; then
+            echo "Webhook files changed during the build; rerun the workflow on the latest main." >&2
+            exit 1
+          fi
+          git switch --detach origin/main
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+
+          path = Path("webhook/resources.yaml")
+          content = path.read_text(encoding="utf-8")
+          updated, count = re.subn(
+              r"(?m)^([ \t]*image:[ \t]*)\S+([ \t]*)$",
+              lambda match: match.group(1) + os.environ["IMAGE"] + match.group(2),
+              content,
+          )
+          if count != 1:
+              raise SystemExit("Expected exactly one image field in webhook/resources.yaml.")
+          path.write_text(updated, encoding="utf-8")
+          PY
+          git add webhook/resources.yaml
+          if git diff --cached --quiet; then
+            echo "Webhook manifest already references this image."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update webhook image" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push origin HEAD:main
 
   configure-secrets:
     if: github.ref == 'refs/heads/main' && inputs.operation == 'configure-secrets'

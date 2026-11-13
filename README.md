@@ -250,9 +250,15 @@ receptor.
    Application do Argo CD, que preserva a annotation de restart do receptor.
 2. Execute manualmente o workflow **Self-healing**, escolhendo `build-image`.
    Essa opção constrói e publica a imagem que executa o receptor Python no
-   Kubernetes; ela não executa o restart.
-   Copie o endereço da imagem exibido no log para `image` em
-   `webhook/resources.yaml`. A imagem usa a revisão Git como tag.
+   Kubernetes e atualiza `image` em `webhook/resources.yaml` com a revisão Git
+   como tag. O commit é enviado para `main` e o Argo CD sincroniza o manifesto,
+   respeitando o número de réplicas configurado. Se o webhook já tiver
+   réplicas ativas, uma nova imagem inicia o rollout do receptor. A operação
+   não reinicia o `auth-service`.
+   O token `GITHUB_TOKEN` do workflow precisa de permissão de escrita em
+   Contents, e a proteção de `main` deve permitir o push. Se os arquivos do
+   webhook mudarem durante o build, ou o push for rejeitado, execute o
+   workflow novamente na revisão atual de `main`.
 3. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
    `SELF_HEALING_APP_ID` (App ID em **General**) e
    `SELF_HEALING_INSTALLATION_ID` (ID na URL da instalação do App). Crie o
