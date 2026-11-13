@@ -3,7 +3,3 @@ kind: Kustomization
 namespace: togglemaster
 resources:
   - resources.yaml
-configMapGenerator:
-  - name: auth-self-healing-script
-    files:
-      - self_healing.py

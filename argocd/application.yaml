@@ -20,6 +20,12 @@ spec:
       jsonPointers:
         - /metadata/annotations/togglemaster.io~1self-healing-history
         - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
+    - group: apps
+      kind: Deployment
+      name: webhook
+      namespace: togglemaster
+      jsonPointers:
+        - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
   syncPolicy:
     automated:
       prune: true

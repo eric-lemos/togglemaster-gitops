@@ -1,0 +1,216 @@
+name: Self-healing
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Operation"
+        type: choice
+        required: true
+        default: build-image
+        options:
+          - build-image
+          - configure-secrets
+          - restart
+      rotate_webhook_credentials:
+        description: "Rotate webhook token and TLS certificate (requires zero webhook replicas)"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'build-image'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -t webhook:"$GITHUB_SHA" webhook
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Publish image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          image="$REGISTRY/togglemaster/webhook:$GITHUB_SHA"
+          docker tag webhook:"$GITHUB_SHA" "$image"
+          tags="$(aws ecr list-images --repository-name togglemaster/webhook --filter tagStatus=TAGGED --query 'imageIds[].imageTag' --output json --region "$AWS_REGION")"
+          if printf '%s' "$tags" | jq -e --arg tag "$GITHUB_SHA" 'index($tag) != null' >/dev/null; then
+            echo "Image tag already exists; skipping push."
+          else
+            docker push "$image"
+          fi
+          echo "Published image: $image"
+
+  configure-secrets:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'configure-secrets'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: webhook-secrets
+      cancel-in-progress: false
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      - name: Configure kubectl
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+      - name: Provision webhook secrets
+        env:
+          APP_ID: ${{ vars.SELF_HEALING_APP_ID }}
+          INSTALLATION_ID: ${{ vars.SELF_HEALING_INSTALLATION_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.SELF_HEALING_APP_PRIVATE_KEY }}
+          ROTATE: ${{ inputs.rotate_webhook_credentials }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ ! "$APP_ID" =~ ^[0-9]+$ || ! "$INSTALLATION_ID" =~ ^[0-9]+$ || -z "$APP_PRIVATE_KEY" ]] ||
+             [[ "$APP_ID" =~ ^0+$ || "$INSTALLATION_ID" =~ ^0+$ ]]; then
+            echo "Configure positive App and installation IDs and the GitHub App private key." >&2
+            exit 1
+          fi
+          work_dir="$(mktemp -d)"
+          trap 'rm -f "$work_dir"/app.pem "$work_dir"/token "$work_dir"/peer-token "$work_dir"/tls.crt "$work_dir"/tls.key "$work_dir"/peer.crt "$work_dir"/cert.pub "$work_dir"/key.pub; rmdir "$work_dir"' EXIT
+          printf '%s\n' "$APP_PRIVATE_KEY" > "$work_dir/app.pem"
+          unset APP_PRIVATE_KEY
+          openssl pkey -in "$work_dir/app.pem" -check -noout >/dev/null
+          openssl pkey -in "$work_dir/app.pem" -pubout | openssl rsa -pubin -noout >/dev/null
+
+          app_token="$(kubectl -n togglemaster get secret webhook --ignore-not-found -o name)"
+          peer_secret="$(kubectl -n observability get secret webhook --ignore-not-found -o name)"
+          tls_secret="$(kubectl -n togglemaster get secret auth-self-healing-tls --ignore-not-found -o name)"
+          if [[ "$ROTATE" == "true" ]]; then
+            replicas="$(kubectl -n togglemaster get deployment webhook --ignore-not-found -o jsonpath='{.spec.replicas}')"
+            if [[ -n "$replicas" && "$replicas" != "0" ]]; then
+              echo "Scale webhook to zero through GitOps before rotating its credentials." >&2
+              exit 1
+            fi
+            pods="$(kubectl -n togglemaster get pods -l app=webhook -o name)"
+            if [[ -n "$pods" ]]; then
+              echo "Wait until all webhook pods have terminated before rotating its credentials." >&2
+              exit 1
+            fi
+            app_token=""
+            peer_secret=""
+            tls_secret=""
+          fi
+          if [[ -n "$app_token" ]]; then
+            kubectl -n togglemaster get secret webhook -o jsonpath='{.data.token}' | base64 --decode > "$work_dir/token"
+          fi
+          if [[ -n "$peer_secret" ]]; then
+            kubectl -n observability get secret webhook -o jsonpath='{.data.token}' | base64 --decode > "$work_dir/peer-token"
+            kubectl -n observability get secret webhook -o jsonpath='{.data.ca\.crt}' | base64 --decode > "$work_dir/peer.crt"
+            if [[ ! -s "$work_dir/peer-token" || ! -s "$work_dir/peer.crt" ]]; then
+              echo "The existing observability secret is incomplete." >&2
+              exit 1
+            fi
+            if [[ -n "$app_token" ]] && ! cmp -s "$work_dir/token" "$work_dir/peer-token"; then
+              echo "Webhook tokens differ between namespaces; disable the receiver and rotate the credentials." >&2
+              exit 1
+            fi
+            if [[ -z "$app_token" ]]; then
+              cp "$work_dir/peer-token" "$work_dir/token"
+            fi
+          fi
+          if [[ -z "$app_token" && -z "$peer_secret" ]]; then
+            openssl rand -hex 32 | tr -d '\n' > "$work_dir/token"
+          fi
+          token_length="$(wc -c < "$work_dir/token")"
+          if [[ "$token_length" -lt 32 || "$token_length" -ne "$(tr -d '[:space:]' < "$work_dir/token" | wc -c)" ]]; then
+            echo "The existing webhook token is invalid." >&2
+            exit 1
+          fi
+          if [[ -n "$tls_secret" ]]; then
+            kubectl -n togglemaster get secret auth-self-healing-tls -o jsonpath='{.data.tls\.crt}' | base64 --decode > "$work_dir/tls.crt"
+            kubectl -n togglemaster get secret auth-self-healing-tls -o jsonpath='{.data.tls\.key}' | base64 --decode > "$work_dir/tls.key"
+            if [[ -n "$peer_secret" ]] && ! cmp -s "$work_dir/tls.crt" "$work_dir/peer.crt"; then
+              echo "Webhook certificates differ between namespaces; disable the receiver and rotate the credentials." >&2
+              exit 1
+            fi
+          elif [[ -n "$peer_secret" ]]; then
+            echo "The webhook TLS private key is missing; disable the receiver and rotate the credentials." >&2
+            exit 1
+          else
+            openssl req -x509 -newkey rsa:3072 -nodes -days 90 \
+              -keyout "$work_dir/tls.key" -out "$work_dir/tls.crt" \
+              -subj '/CN=webhook.togglemaster.svc' \
+              -addext 'subjectAltName=DNS:webhook.togglemaster.svc' \
+              -addext 'basicConstraints=critical,CA:TRUE' \
+              -addext 'keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign' \
+              -addext 'extendedKeyUsage=serverAuth' >/dev/null 2>&1
+          fi
+          if ! openssl x509 -in "$work_dir/tls.crt" -checkend 604800 -noout >/dev/null; then
+            echo "Webhook TLS certificate is invalid or expires within seven days; rotate the credentials." >&2
+            exit 1
+          fi
+          openssl verify -purpose sslserver -verify_hostname webhook.togglemaster.svc \
+            -CAfile "$work_dir/tls.crt" "$work_dir/tls.crt" >/dev/null
+          openssl x509 -in "$work_dir/tls.crt" -pubkey -noout > "$work_dir/cert.pub"
+          openssl pkey -in "$work_dir/tls.key" -pubout > "$work_dir/key.pub"
+          if ! cmp -s "$work_dir/cert.pub" "$work_dir/key.pub"; then
+            echo "Webhook TLS certificate and private key do not match." >&2
+            exit 1
+          fi
+          kubectl -n togglemaster create secret generic auth-self-healing-app \
+            --from-literal="app-id=$APP_ID" --from-literal="installation-id=$INSTALLATION_ID" \
+            --from-file="private-key.pem=$work_dir/app.pem" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n togglemaster create secret generic webhook \
+            --from-file="token=$work_dir/token" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n togglemaster create secret tls auth-self-healing-tls \
+            --cert="$work_dir/tls.crt" --key="$work_dir/tls.key" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n observability create secret generic webhook \
+            --from-file="token=$work_dir/token" --from-file="ca.crt=$work_dir/tls.crt" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          deployment="$(kubectl -n togglemaster get deployment webhook --ignore-not-found -o name)"
+          if [[ -n "$deployment" ]]; then
+            kubectl -n togglemaster rollout restart deployment/webhook
+            kubectl -n togglemaster rollout status deployment/webhook --timeout=300s
+          fi
+          echo "Webhook secrets updated. TLS certificate expiry:"
+          openssl x509 -in "$work_dir/tls.crt" -noout -enddate
+
+  restart:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'restart' && vars.SELF_HEALING_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: auth-self-healing
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      - name: Configure kubectl
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+      - name: Check alert and restart if allowed
+        run: python3 webhook/self_healing.py --restart

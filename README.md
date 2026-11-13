@@ -209,37 +209,92 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
 
 ## Self-healing do auth-service
 
-O CronJob `auth-self-healing` está suspenso durante a mudança para uma
-automação via GitHub Actions. Quando ativo, ele consulta o Prometheus a cada minuto. Enquanto
-`ToggleMasterAuthHighErrorRate` estiver em `Firing`, ele solicita um rollout do
-Deployment `auth-service`, no máximo uma vez a cada 15 minutos e três vezes
-em uma janela móvel de uma hora. O histórico fica em uma annotation do
-Deployment e é atualizado junto com o pedido de restart; conflitos de versão,
-histórico inválido ou falhas de acesso interrompem o Job e ficam em seus logs.
-A política de `ignoreDifferences` do Argo CD preserva esse histórico e a
-annotation de restart durante a sincronização. Se o próprio Deployment for
-excluído e recriado, o histórico é perdido e os limites recomeçam.
+O CronJob anterior foi removido dos manifests; o Argo CD remove seus recursos
+gerenciados após a publicação e sincronização. A nova arquitetura é
+Alertmanager → webhook interno HTTPS → GitHub App → GitHub Actions → EKS.
+Por padrão o receptor tem zero réplicas, a rota do Alertmanager está desativada
+e a Action só atua se a variável `SELF_HEALING_ENABLED` for `true`.
 
-O ServiceAccount tem permissão para ler e alterar apenas esse Deployment.
-O Job não expõe webhook nem recebe comandos externos. Um alerta sintético
-inserido somente no Alertmanager não dispara a automação: ela consulta o estado
-da regra no Prometheus. A ausência de dados no Prometheus não comprova que o
-serviço está saudável. O restart é apenas uma tentativa de mitigação e não
-corrige necessariamente a causa raiz.
+O receptor aceita apenas notificações autenticadas do alerta
+`ToggleMasterAuthHighErrorRate` com `service=auth-service`. O repositório, a
+branch e a Action de destino são fixos. A Action consulta novamente o
+Prometheus; sem alerta firing, ou em caso de erro, não reinicia o serviço.
+Cada restart atualiza atomicamente a annotation de histórico e a annotation de
+rollout com `resourceVersion`: no mínimo 15 minutos entre tentativas e no
+máximo três em uma janela móvel de uma hora. Conflitos interrompem a execução.
+O Argo CD preserva as duas annotations, mas excluir e recriar o Deployment
+apaga o histórico. Um rollout bem-sucedido não garante que o alerta foi
+resolvido nem corrige necessariamente a causa raiz.
 
-Após sincronizar o GitOps, consulte as execuções:
+O intervalo do Alertmanager é contado a partir da notificação, não do restart.
+Se uma repetição chegar antes de decorridos 15 minutos do restart, ela será
+ignorada e uma nova tentativa dependerá da próxima notificação.
 
-```bash
-kubectl -n togglemaster get cronjob auth-self-healing
-kubectl -n togglemaster get jobs | grep auth-self-healing
-kubectl -n togglemaster logs job/<NOME-DO-JOB>
-kubectl -n togglemaster rollout status deployment/auth-service
-```
+### Preparação e ativação
 
-Uma solicitação de restart nos logs não garante que o rollout terminou ou que o
-alerta foi resolvido; confira o rollout, o Prometheus e o incidente. Para
-desativar temporariamente a automação, suspenda o CronJob; como o Argo CD
-sincroniza o manifesto automaticamente, registre a suspensão no Git para que
-seja persistente. O fluxo precisa ser testado com falha controlada antes da
-demonstração, e o professor deve confirmar que o CronJob atende ao requisito.
+Execute as etapas apenas quando a ativação for autorizada. Elas dependem de
+credenciais AWS válidas, do cluster existente e dos secrets e variáveis AWS já
+usados pelo GitOps. O usuário AWS da Action precisa de acesso ao proxy do
+serviço Prometheus e de `get`, `patch` e `watch` no Deployment
+`togglemaster/auth-service`. O GitHub App deve estar instalado neste repositório
+com permissão **Actions: Read and write**. A operação de configuração também
+precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
+`togglemaster` e `observability`, e para reiniciar e acompanhar o Deployment
+`togglemaster/webhook`. A rotação também precisa listar os pods do
+receptor.
+
+1. Publique as alterações dos repositórios Terraform e GitOps. Aplique o
+   Terraform para criar o repositório ECR `togglemaster/webhook`.
+   O valor `self_healing_webhook_enabled` do Helm deve continuar `false`.
+   Execute o workflow GitOps com **K8s Apply** para atualizar também a
+   Application do Argo CD, que preserva a annotation de restart do receptor.
+2. Execute manualmente o workflow **Self-healing**, escolhendo `build-image`.
+   Essa opção constrói e publica a imagem que executa o receptor Python no
+   Kubernetes; ela não executa o restart.
+   Copie o endereço da imagem exibido no log para `image` em
+   `webhook/resources.yaml`. A imagem usa a revisão Git como tag.
+3. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
+   `SELF_HEALING_APP_ID` (App ID em **General**) e
+   `SELF_HEALING_INSTALLATION_ID` (ID na URL da instalação do App). Crie o
+   secret `SELF_HEALING_APP_PRIVATE_KEY` com o conteúdo integral do arquivo
+   `.pem`, incluindo as linhas BEGIN e END. Não adicione a chave ao Git nem a
+   compartilhe em mensagens.
+   Execute o workflow **Self-healing** com `operation=configure-secrets` e
+   `rotate_webhook_credentials=false`. Ele cria ou atualiza os Secrets nas
+   duas namespaces, gera o token e o certificado TLS de 90 dias quando
+   necessário e reinicia apenas o receptor, caso seu Deployment já exista.
+   Os valores gerados permanecem no Kubernetes, não no state do Terraform.
+   A execução de `restart` não modifica esses Secrets. Repita a configuração
+   após atualizar a chave do GitHub App ou recriar o cluster.
+4. Altere `replicas` para `1` no manifesto do receptor, publique o GitOps e
+   aguarde o Deployment ficar pronto. Configure a variável de repositório
+   `SELF_HEALING_ENABLED=true` no GitHub somente quando autorizar reinícios.
+5. No repositório Terraform, defina `self_healing_webhook_enabled = true` em
+   `helm/helm.auto.tfvars`, publique e aplique o Terraform. A rota específica
+   repete notificações a cada 15 minutos, sem alterar a frequência do Discord
+   ou do PagerDuty.
+6. Valide o fluxo com uma falha controlada autorizada, conferindo o alerta no
+   Prometheus, os logs do receptor, a execução da Action e o rollout. Um
+   alerta sintético enviado apenas ao Alertmanager não autoriza restart.
+
+Para suspender novas ações, altere `SELF_HEALING_ENABLED` para `false` no
+GitHub; execuções já iniciadas não são canceladas. Desative também a rota Helm
+e volte o receptor para zero réplicas nos manifests. A Action pode ser
+acionada manualmente, mas sempre aplica as mesmas verificações.
+O webhook seleciona a operação `restart`, que executa
+`python3 webhook/self_healing.py --restart` no runner; sem essa flag o
+mesmo arquivo inicia o servidor HTTPS do receptor.
+
+### Renovação do token e do certificado
+
+O workflow mostra a data de expiração do certificado sem expor credenciais.
+Para renová-lo ou trocar o token, desative a rota no Helm, publique
+`replicas: 0` para o receptor e aguarde a sincronização do Argo CD. Depois,
+execute **Self-healing** com `operation=configure-secrets` e
+`rotate_webhook_credentials=true`. A rotação exige zero réplicas e que todos
+os pods do receptor tenham terminado, e atualiza os Secrets dos dois lados;
+reative o receptor e a rota após a conclusão. Existe
+uma interrupção de notificações de self-healing durante essa manutenção.
+Se uma execução falhar parcialmente, mantenha o receptor desativado e repita
+a rotação. Sem rotação, divergências entre os Secrets são tratadas como erro.
   

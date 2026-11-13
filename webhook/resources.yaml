@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: webhook
+  template:
+    metadata:
+      labels:
+        app: webhook
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: webhook
+          image: REPLACE_WITH_PUBLISHED_IMAGE
+          ports:
+            - containerPort: 8443
+          env:
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-self-healing-app
+                  key: app-id
+            - name: GITHUB_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-self-healing-app
+                  key: installation-id
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: 8443
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: 8443
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: app
+              mountPath: /secrets/app
+              readOnly: true
+            - name: webhook-token
+              mountPath: /secrets/webhook
+              readOnly: true
+            - name: tls
+              mountPath: /secrets/tls
+              readOnly: true
+      volumes:
+        - name: app
+          secret:
+            secretName: auth-self-healing-app
+        - name: webhook-token
+          secret:
+            secretName: webhook
+        - name: tls
+          secret:
+            secretName: auth-self-healing-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook
+spec:
+  type: ClusterIP
+  selector:
+    app: webhook
+  ports:
+    - port: 8443
+      targetPort: 8443
