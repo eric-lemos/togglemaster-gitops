@@ -1,4 +1,4 @@
-name: GitOps Self-Healing
+name: GitOps SelfHealing
 
 on:
   workflow_dispatch:
