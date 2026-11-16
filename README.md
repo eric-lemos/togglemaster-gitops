@@ -40,7 +40,7 @@ O workflow `.github/workflows/operations.yml` pode ser executado em **Actions > 
 - `Postgres Schema`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
 - `Validate Togglemaster`: aguarda os rollouts e executa o validador das aplicações.
 
-Primeiro execute **Terraform Ops → Apply Infra**. Depois, no GitOps, selecione
+Primeiro execute **Terraform Ops → Apply**. Depois, no GitOps, selecione
 **Apply** para executar o fluxo completo na branch `main`. Os jobs de schema e
 validação são opcionais e só executam quando selecionados. O schema é
 independente e pode rodar em paralelo ao Apply; garanta que seus pré-requisitos
@@ -272,7 +272,7 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
 `togglemaster/self-healing`.
 
 1. Configure `SELF_HEALING_ENABLED=false` no GitHub. Crie a infraestrutura
-   com **Terraform Ops → Apply Infra**. A rota permanece desativada na primeira
+   com **Terraform Ops → Apply**. A rota permanece desativada na primeira
    instalação.
 2. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
    `SELF_HEALING_APP_ID` (App ID em **General**) e
