@@ -64,12 +64,12 @@ def build_patch(deployment, now):
         type(entry) is not int or entry < 0 or entry > now for entry in history
     ):
         raise ValueError("Invalid self-healing history; refusing to restart")
-    history = sorted(entry for entry in history if entry > now - 3600)
-    if history and now - history[-1] < 900:
+    history = sorted(entry for entry in history if entry > now - 600)
+    if history and now - history[-1] < 120:
         print("Restart skipped: minimum interval has not elapsed")
         return None
     if len(history) >= 3:
-        print("Restart skipped: hourly limit reached")
+        print("Restart skipped: 10-minute limit reached")
         return None
     restarted_at = datetime.datetime.fromtimestamp(
         now, datetime.timezone.utc

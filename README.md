@@ -220,14 +220,14 @@ O receptor aceita apenas notificações autenticadas do alerta
 branch e a Action de destino são fixos. A Action consulta novamente o
 Prometheus; sem alerta firing, ou em caso de erro, não reinicia o serviço.
 Cada restart atualiza atomicamente a annotation de histórico e a annotation de
-rollout com `resourceVersion`: no mínimo 15 minutos entre tentativas e no
-máximo três em uma janela móvel de uma hora. Conflitos interrompem a execução.
+rollout com `resourceVersion`: no mínimo 2 minutos entre restarts e no
+máximo três em uma janela móvel de 10 minutos. Conflitos interrompem a execução.
 O Argo CD preserva as duas annotations, mas excluir e recriar o Deployment
 apaga o histórico. Um rollout bem-sucedido não garante que o alerta foi
 resolvido nem corrige necessariamente a causa raiz.
 
 O intervalo do Alertmanager é contado a partir da notificação, não do restart.
-Se uma repetição chegar antes de decorridos 15 minutos do restart, ela será
+Se uma repetição chegar antes de decorridos 2 minutos do restart, ela será
 ignorada e uma nova tentativa dependerá da próxima notificação.
 
 ### Preparação e ativação
@@ -275,8 +275,8 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
    `SELF_HEALING_ENABLED=true` no GitHub somente quando autorizar reinícios.
 5. No repositório Terraform, defina `self_healing_webhook_enabled = true` em
    `helm/helm.auto.tfvars`, publique e aplique o Terraform. A rota específica
-   repete notificações a cada 15 minutos, sem alterar a frequência do Discord
-   ou do PagerDuty.
+   repete notificações a cada 2 minutos; o Discord e o PagerDuty também
+   recebem repetições a cada 2 minutos enquanto o alerta permanecer ativo.
 6. Valide o fluxo com uma falha controlada autorizada, conferindo o alerta no
    Prometheus, os logs do receptor, a execução da Action e o rollout. Um
    alerta sintético enviado apenas ao Alertmanager não autoriza restart.
