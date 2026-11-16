@@ -1,0 +1,78 @@
+name: Simulate Error
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_simulation:
+        description: "Confirm controlled HTTP 500 errors and a possible auth-service restart"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: simulate-error
+  cancel-in-progress: false
+
+jobs:
+  simulate:
+    name: Simulate auth-service errors
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate simulation prerequisites
+        env:
+          CONFIRM_SIMULATION: ${{ inputs.confirm_simulation }}
+          SELF_HEALING_ENABLED: ${{ vars.SELF_HEALING_ENABLED }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "The simulation must run from main." >&2
+            exit 1
+          fi
+          if [[ "$CONFIRM_SIMULATION" != "true" ]]; then
+            echo "Confirm the controlled errors and possible restart before running the simulation." >&2
+            exit 1
+          fi
+          if [[ "$SELF_HEALING_ENABLED" != "true" ]]; then
+            echo "SELF_HEALING_ENABLED must be true for this simulation." >&2
+            exit 1
+          fi
+          if [[ -z "$AWS_REGION" || -z "$EKS_CLUSTER_NAME" || -z "$MASTER_KEY" ]]; then
+            echo "AWS_REGION, EKS_CLUSTER_NAME and the MASTER_KEY secret must be configured." >&2
+            exit 1
+          fi
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Configure kubectl
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Run controlled error simulation
+        env:
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+          SELF_HEALING_ENABLED: ${{ vars.SELF_HEALING_ENABLED }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/simulate_error/simulate_error.py

@@ -316,6 +316,20 @@ Ele não faz rotação automática: um certificado inválido ou com menos de set
 dias de validade e divergências entre os Secrets interrompem a configuração.
 Para o laboratório, um cluster recriado recebe novas credenciais no próximo apply.
 
+### Simulação de erro pelo GitHub Actions
+
+Em um laboratório autorizado, configure e valide o self-healing, defina
+`SELF_HEALING_ENABLED=true` e execute **Actions → Simulate Error → Run workflow**
+na branch `main`, marcando a confirmação. O workflow usa as credenciais AWS e
+`MASTER_KEY` do repositório, configura o acesso ao EKS e executa
+`scripts/simulate_error/simulate_error.py`.
+
+O script gera 80 respostas HTTP 500 reais e controladas no `auth-service`,
+acompanha o alerta no Prometheus e aguarda um restart e seu rollout. A execução
+pode gerar notificações reais no Discord e no PagerDuty; confirme a entrega
+separadamente. Não execute em produção. É necessário acesso aos Deployments,
+ao port-forward do serviço e ao proxy do Prometheus.
+
 ### Simulação local de erro
 
 Somente em um ambiente de teste autorizado, com o self-healing configurado e
