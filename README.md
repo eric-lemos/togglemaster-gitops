@@ -240,9 +240,8 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
 O CronJob anterior foi removido dos manifests; o Argo CD remove seus recursos
 gerenciados após a publicação e sincronização. A nova arquitetura é
 Alertmanager → webhook interno HTTPS → GitHub App → GitHub Actions → EKS.
-O manifesto configura uma réplica do receptor, a rota do Alertmanager está
-desativada durante a migração e a Action só atua se a variável
-`SELF_HEALING_ENABLED` for `true`.
+O manifesto configura uma réplica do receptor. `SELF_HEALING_ENABLED` autoriza
+reinícios e controla a rota do Alertmanager no próximo Helm Apply.
 
 O receptor aceita apenas notificações autenticadas do alerta
 `ToggleMasterAuthHighErrorRate` com `service=auth-service`. O repositório, a
@@ -271,8 +270,7 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
 `togglemaster` e `observability`, e para reiniciar e acompanhar o Deployment
 `togglemaster/self-healing`.
 
-1. Configure `SELF_HEALING_ENABLED=false` e
-   `SELF_HEALING_ALERT_ROUTE_ENABLED=false` no GitHub. Crie a infraestrutura
+1. Configure `SELF_HEALING_ENABLED=false` no GitHub. Crie a infraestrutura
    com **Terraform Ops → Apply Infra** e instale os charts com **K8s Ops →
    Helm Apply**. A rota permanece desativada na primeira instalação.
 2. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
@@ -295,20 +293,19 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
    no Kubernetes, não no state do Terraform. Repita a configuração após
    atualizar a chave do GitHub App ou recriar o cluster.
 4. Confirme que o Deployment `self-healing` está pronto. Somente quando
-   autorizar reinícios, configure `SELF_HEALING_ENABLED=true` no GitHub.
-5. Defina `SELF_HEALING_ALERT_ROUTE_ENABLED=true` no GitOps e execute
-   **K8s Ops → Helm Apply**. O job exige o Secret `observability/self-healing`
+   autorizar reinícios, configure `SELF_HEALING_ENABLED=true` no GitHub e
+   execute **K8s Ops → Helm Apply**. O job exige o Secret `observability/self-healing`
    antes de habilitar a rota. A rota específica
    repete notificações a cada 2 minutos; o Discord e o PagerDuty também
    recebem repetições a cada 2 minutos enquanto o alerta permanecer ativo.
-6. Valide o fluxo com uma falha controlada autorizada, conferindo o alerta no
+5. Valide o fluxo com uma falha controlada autorizada, conferindo o alerta no
    Prometheus, os logs do receptor, a execução da Action e o rollout. Um
    alerta sintético enviado apenas ao Alertmanager não autoriza restart.
 
 Para suspender novas ações, altere `SELF_HEALING_ENABLED` para `false` no
-GitHub; execuções já iniciadas não são canceladas. Defina também
-`SELF_HEALING_ALERT_ROUTE_ENABLED=false` e execute **Helm Apply** para desativar
-a rota; volte o receptor para zero réplicas nos manifests. A Action pode ser
+GitHub; execuções já iniciadas não são canceladas. Execute **Helm Apply** para
+desativar a rota; até então o Alertmanager ainda pode enviar notificações.
+Volte o receptor para zero réplicas nos manifests. A Action pode ser
 acionada manualmente, mas sempre aplica as mesmas verificações.
 O webhook dispara o workflow **Self Healing**, que executa
 `python3 scripts/self_healing/self_healing.py --restart` no runner; sem essa flag o

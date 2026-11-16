@@ -9,9 +9,9 @@ if [[ -z "${PAGERDUTY_INTEGRATION_KEY:-}" || "$PAGERDUTY_INTEGRATION_KEY" =~ [[:
   echo "PAGERDUTY_INTEGRATION_KEY must be a non-empty Events API v2 integration key without whitespace." >&2
   exit 1
 fi
-route_enabled="${SELF_HEALING_ALERT_ROUTE_ENABLED:-false}"
+route_enabled="${SELF_HEALING_ENABLED:-false}"
 if [[ "$route_enabled" != true && "$route_enabled" != false ]]; then
-  echo "SELF_HEALING_ALERT_ROUTE_ENABLED must be true or false." >&2
+  echo "SELF_HEALING_ENABLED must be true or false." >&2
   exit 1
 fi
 command -v htpasswd >/dev/null || { echo "htpasswd is required to create monitoring credentials." >&2; exit 1; }
