@@ -1,6 +1,6 @@
 # ToggleMaster GitOps
 
-Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow **Kubernetes Ops**:
+Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow **K8s Operations**:
 
 ```bash
 kubectl apply -f k8s/core/argocd.yml
@@ -37,7 +37,7 @@ O workflow `.github/workflows/gitops.yml` pode ser executado em **Actions > GitO
 - `Kubernetes Apply`: prepara os secrets de runtime e aplica os manifests Kubernetes e a Application do Argo CD.
 - `Run Postgres Schema Job`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
 
-O workflow Kubernetes Ops não instala charts nem executa Helm. Para criar ou atualizar os charts, execute o workflow Terraform em **Actions > Terraform CI > Run workflow** com `apply=true`. Ele aplica primeiro a infraestrutura e depois os charts em um state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
+O workflow K8s Operations não instala charts nem executa Helm. Para criar ou atualizar os charts, execute o workflow Terraform em **Actions > Terraform CI > Run workflow** com `apply=true`. Ele aplica primeiro a infraestrutura e depois os charts em um state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
 
 ## Acesso à interface do Argo CD
 
@@ -245,7 +245,7 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
 1. Publique as alterações dos repositórios Terraform e GitOps. Aplique o
    Terraform para criar o repositório ECR `togglemaster/webhook`.
    O valor `self_healing_webhook_enabled` do Helm deve continuar `false`.
-   Execute o workflow **Kubernetes Ops** com **Kubernetes Apply** para atualizar também a
+   Execute o workflow **K8s Operations** com **Kubernetes Apply** para atualizar também a
    Application do Argo CD, que preserva a annotation de restart do receptor.
 2. O **Kubernetes Apply** executa antes o job **Image Build**, que constrói e
    publica a imagem do receptor Python (`scripts/webhook`) e atualiza `image`
@@ -264,7 +264,7 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
    secret `SELF_HEALING_APP_PRIVATE_KEY` com o conteúdo integral do arquivo
    `.pem`, incluindo as linhas BEGIN e END. Não adicione a chave ao Git nem a
    compartilhe em mensagens.
-   Execute **Kubernetes Ops** com **Kubernetes Apply**. Ele cria ou atualiza os Secrets nas
+   Execute **K8s Operations** com **Kubernetes Apply**. Ele cria ou atualiza os Secrets nas
    duas namespaces, gera o token e o certificado TLS de 90 dias quando
    necessário e reinicia apenas o receptor, caso seu Deployment já exista.
    Os valores gerados permanecem no Kubernetes, não no state do Terraform.
@@ -285,9 +285,14 @@ Para suspender novas ações, altere `SELF_HEALING_ENABLED` para `false` no
 GitHub; execuções já iniciadas não são canceladas. Desative também a rota Helm
 e volte o receptor para zero réplicas nos manifests. A Action pode ser
 acionada manualmente, mas sempre aplica as mesmas verificações.
-O webhook dispara o workflow **Kubernetes Self Healing**, que executa
+O webhook dispara o workflow **Self Healing**, que executa
 `python3 scripts/webhook/self_healing.py --restart` no runner; sem essa flag o
 mesmo arquivo inicia o servidor HTTPS do receptor.
+
+Ao renomear o workflow de self-healing, publique as alterações e execute
+**K8s Operations** com **Kubernetes Apply** para reconstruir a imagem do
+webhook com o novo caminho. Até a atualização do receptor, o dispatch pode
+falhar porque a imagem anterior ainda aponta para o arquivo antigo.
 
 O workflow mostra a data de expiração do certificado sem expor credenciais.
 Ele não faz rotação automática: um certificado inválido ou com menos de sete

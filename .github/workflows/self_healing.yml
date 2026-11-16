@@ -1,4 +1,4 @@
-name: Kubernetes Self Healing
+name: Self Healing
 
 on:
   workflow_dispatch:

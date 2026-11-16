@@ -1,4 +1,4 @@
-name: Kubernetes Ops
+name: K8s Operations
 
 on:
   workflow_dispatch:

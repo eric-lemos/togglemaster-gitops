@@ -23,7 +23,7 @@ PROMETHEUS_PROXY = (
 )
 ALERT_NAME = "ToggleMasterAuthHighErrorRate"
 GITHUB_API = "https://api.github.com"
-WORKFLOW_PATH = "/repos/eric-lemos/togglemaster-gitops/actions/workflows/kubernetes_sh.yml/dispatches"
+WORKFLOW_PATH = "/repos/eric-lemos/togglemaster-gitops/actions/workflows/self_healing.yml/dispatches"
 MAX_BODY = 64 * 1024
 
 def kubectl(*args):
