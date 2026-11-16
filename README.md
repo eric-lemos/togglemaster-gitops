@@ -326,10 +326,12 @@ na branch `main`. O workflow usa as credenciais AWS e
 `scripts/simulate_error/simulate_error.py`.
 
 O script gera 80 respostas HTTP 500 reais e controladas no `auth-service`,
-acompanha o alerta no Prometheus e aguarda um restart e seu rollout. A execução
-pode gerar notificações reais no Discord e no PagerDuty; confirme a entrega
-separadamente. Não execute em produção. É necessário acesso aos Deployments,
-ao port-forward do serviço e ao proxy do Prometheus.
+acompanha o alerta no Prometheus, aguarda um restart e seu rollout e monitora
+o alerta até ficar inativo. Após o rollout, espera até 10 minutos pela
+resolução e falha caso o alerta permaneça ativo. A execução pode gerar
+notificações reais no Discord e no PagerDuty; confirme a entrega e a resolução
+das notificações separadamente. Não execute em produção. É necessário acesso
+aos Deployments, ao port-forward do serviço e ao proxy do Prometheus.
 
 ### Simulação local de erro
 
@@ -350,5 +352,5 @@ unset MASTER_KEY SELF_HEALING_ENABLED
 
 A variável local `SELF_HEALING_ENABLED` é uma confirmação exigida pelo script;
 ela não altera nem verifica a variável do GitHub. O script acompanha o alerta
-e o rollout, mas a entrega ao Discord e ao PagerDuty deve ser conferida
-separadamente.
+até ficar inativo e o rollout, mas a entrega e a resolução das notificações no
+Discord e no PagerDuty devem ser conferidas separadamente.

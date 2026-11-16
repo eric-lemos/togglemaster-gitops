@@ -137,7 +137,7 @@ def send_errors(port: int, master_key: str, count: int = REQUEST_COUNT) -> None:
             time.sleep(REQUEST_INTERVAL)
 
 
-def wait_for_alert(timeout: int = 240) -> None:
+def wait_for_alert(timeout: int = 240, *, resolved: bool = False) -> None:
     deadline = time.monotonic() + timeout
     previous = None
     print("The query below repeats every 5 seconds; output is filtered to this alert.", flush=True)
@@ -147,9 +147,11 @@ def wait_for_alert(timeout: int = 240) -> None:
         if status != previous:
             print(f"Prometheus (filtered response): {ALERT_NAME}, service=auth-service, state={status}.", flush=True)
             previous = status
-        if "firing" in states:
+        if (resolved and not states) or (not resolved and "firing" in states):
             return
         time.sleep(5)
+    if resolved:
+        raise RuntimeError("The alert did not become inactive in time.")
     raise RuntimeError("The alert did not reach firing state in time.")
 
 
@@ -255,7 +257,11 @@ def main() -> None:
     repository = os.environ.get("GITHUB_REPOSITORY")
     if repository:
         print(f"GitHub Actions: https://github.com/{repository}/actions/workflows/self_healing.yml")
-    print("The alert may remain active until the errors leave the 5-minute window.", flush=True)
+    title("5. Resolution: waiting for the alert to close")
+    print("The alert can remain active until the errors leave the 5-minute window.", flush=True)
+    subtitle("Checking that the alert becomes inactive in Prometheus")
+    wait_for_alert(resolved=True, timeout=600)
+    print("The alert is inactive in Prometheus. Check notification resolution separately.", flush=True)
 
 
 if __name__ == "__main__":
