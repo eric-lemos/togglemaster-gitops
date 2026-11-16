@@ -41,7 +41,7 @@ jobs:
       - name: Require main branch
         run: |
           if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "Kubernetes Apply must run from main because it commits the webhook image." >&2
+            echo "Kubernetes Apply must run from main because it commits the self-healing image." >&2
             exit 1
           fi
 
@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: Compute image tag
-        run: echo "TAG=$(git rev-parse HEAD:scripts/webhook)" >> "$GITHUB_ENV"
+        run: echo "TAG=$(git rev-parse HEAD:scripts/self_healing)" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -70,17 +70,17 @@ jobs:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           set -euo pipefail
-          image="$REGISTRY/togglemaster/webhook:$TAG"
-          tags="$(aws ecr list-images --repository-name togglemaster/webhook --filter tagStatus=TAGGED --query 'imageIds[].imageTag' --output json --region "$AWS_REGION")"
+          image="$REGISTRY/togglemaster/self_healing:$TAG"
+          tags="$(aws ecr list-images --repository-name togglemaster/self_healing --filter tagStatus=TAGGED --query 'imageIds[].imageTag' --output json --region "$AWS_REGION")"
           if printf '%s' "$tags" | jq -e --arg tag "$TAG" 'index($tag) != null' >/dev/null; then
             echo "Image tag already exists; skipping build."
           else
-            docker build -t "$image" scripts/webhook
+            docker build -t "$image" scripts/self_healing
             docker push "$image"
           fi
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Update webhook manifest
+      - name: Update self-healing manifest
         run: |
           set -euo pipefail
           git fetch origin main
@@ -88,8 +88,8 @@ jobs:
             echo "The build revision is no longer an ancestor of main; rerun the workflow." >&2
             exit 1
           fi
-          if ! git diff --quiet "$GITHUB_SHA" origin/main -- scripts/webhook; then
-            echo "Webhook files changed during the build; rerun the workflow on the latest main." >&2
+          if ! git diff --quiet "$GITHUB_SHA" origin/main -- scripts/self_healing; then
+            echo "Self-healing files changed during the build; rerun the workflow on the latest main." >&2
             exit 1
           fi
           git switch --detach origin/main
@@ -98,7 +98,7 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path("k8s/core/webhook.yml")
+          path = Path("k8s/core/self_healing.yml")
           content = path.read_text(encoding="utf-8")
           updated, count = re.subn(
               r"(?m)^([ \t]*image:[ \t]*)\S+([ \t]*)$",
@@ -106,17 +106,17 @@ jobs:
               content,
           )
           if count != 1:
-              raise SystemExit("Expected exactly one image field in k8s/core/webhook.yml.")
+              raise SystemExit("Expected exactly one image field in k8s/core/self_healing.yml.")
           path.write_text(updated, encoding="utf-8")
           PY
-          git add k8s/core/webhook.yml
+          git add k8s/core/self_healing.yml
           if git diff --cached --quiet; then
-            echo "Webhook manifest already references this image."
+            echo "Self-healing manifest already references this image."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update webhook image"
+          git commit -m "chore: update self-healing image"
           git push origin HEAD:main
 
   deploy:
@@ -204,7 +204,7 @@ jobs:
       - name: Configure kubectl
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
 
-      - name: Provision webhook secrets
+      - name: Provision self-healing secrets
         env:
           APP_ID: ${{ vars.SELF_HEALING_APP_ID }}
           INSTALLATION_ID: ${{ vars.SELF_HEALING_INSTALLATION_ID }}
@@ -225,7 +225,7 @@ jobs:
           openssl pkey -in "$work_dir/app.pem" -pubout | openssl rsa -pubin -noout >/dev/null
 
           secret_versions() {
-            for secret in "togglemaster auth-self-healing-app" "togglemaster webhook" "togglemaster auth-self-healing-tls" "observability webhook"; do
+            for secret in "togglemaster auth-self-healing-app" "togglemaster self-healing" "togglemaster self-healing-tls" "observability self-healing"; do
               set -- $secret
               kubectl -n "$1" get secret "$2" --ignore-not-found -o jsonpath='{.metadata.resourceVersion}'
               echo
@@ -233,21 +233,21 @@ jobs:
           }
           versions_before="$(secret_versions)"
 
-          app_token="$(kubectl -n togglemaster get secret webhook --ignore-not-found -o name)"
-          peer_secret="$(kubectl -n observability get secret webhook --ignore-not-found -o name)"
-          tls_secret="$(kubectl -n togglemaster get secret auth-self-healing-tls --ignore-not-found -o name)"
+          app_token="$(kubectl -n togglemaster get secret self-healing --ignore-not-found -o name)"
+          peer_secret="$(kubectl -n observability get secret self-healing --ignore-not-found -o name)"
+          tls_secret="$(kubectl -n togglemaster get secret self-healing-tls --ignore-not-found -o name)"
           if [[ -n "$app_token" ]]; then
-            kubectl -n togglemaster get secret webhook -o jsonpath='{.data.token}' | base64 --decode > "$work_dir/token"
+            kubectl -n togglemaster get secret self-healing -o jsonpath='{.data.token}' | base64 --decode > "$work_dir/token"
           fi
           if [[ -n "$peer_secret" ]]; then
-            kubectl -n observability get secret webhook -o jsonpath='{.data.token}' | base64 --decode > "$work_dir/peer-token"
-            kubectl -n observability get secret webhook -o jsonpath='{.data.ca\.crt}' | base64 --decode > "$work_dir/peer.crt"
+            kubectl -n observability get secret self-healing -o jsonpath='{.data.token}' | base64 --decode > "$work_dir/peer-token"
+            kubectl -n observability get secret self-healing -o jsonpath='{.data.ca\.crt}' | base64 --decode > "$work_dir/peer.crt"
             if [[ ! -s "$work_dir/peer-token" || ! -s "$work_dir/peer.crt" ]]; then
               echo "The existing observability secret is incomplete." >&2
               exit 1
             fi
             if [[ -n "$app_token" ]] && ! cmp -s "$work_dir/token" "$work_dir/peer-token"; then
-              echo "Webhook tokens differ between namespaces; disable the receiver and resolve the inconsistent secrets." >&2
+              echo "Self-healing tokens differ between namespaces; disable the receiver and resolve the inconsistent secrets." >&2
               exit 1
             fi
             if [[ -z "$app_token" ]]; then
@@ -259,58 +259,58 @@ jobs:
           fi
           token_length="$(wc -c < "$work_dir/token")"
           if [[ "$token_length" -lt 32 || "$token_length" -ne "$(tr -d '[:space:]' < "$work_dir/token" | wc -c)" ]]; then
-            echo "The existing webhook token is invalid." >&2
+            echo "The existing self-healing token is invalid." >&2
             exit 1
           fi
           if [[ -n "$tls_secret" ]]; then
-            kubectl -n togglemaster get secret auth-self-healing-tls -o jsonpath='{.data.tls\.crt}' | base64 --decode > "$work_dir/tls.crt"
-            kubectl -n togglemaster get secret auth-self-healing-tls -o jsonpath='{.data.tls\.key}' | base64 --decode > "$work_dir/tls.key"
+            kubectl -n togglemaster get secret self-healing-tls -o jsonpath='{.data.tls\.crt}' | base64 --decode > "$work_dir/tls.crt"
+            kubectl -n togglemaster get secret self-healing-tls -o jsonpath='{.data.tls\.key}' | base64 --decode > "$work_dir/tls.key"
             if [[ -n "$peer_secret" ]] && ! cmp -s "$work_dir/tls.crt" "$work_dir/peer.crt"; then
-              echo "Webhook certificates differ between namespaces; disable the receiver and resolve the inconsistent secrets." >&2
+              echo "Self-healing certificates differ between namespaces; disable the receiver and resolve the inconsistent secrets." >&2
               exit 1
             fi
           elif [[ -n "$peer_secret" ]]; then
-            echo "The webhook TLS private key is missing; disable the receiver and resolve the inconsistent secrets." >&2
+            echo "The self-healing TLS private key is missing; disable the receiver and resolve the inconsistent secrets." >&2
             exit 1
           else
             openssl req -x509 -newkey rsa:3072 -nodes -days 90 \
               -keyout "$work_dir/tls.key" -out "$work_dir/tls.crt" \
-              -subj '/CN=webhook.togglemaster.svc' \
-              -addext 'subjectAltName=DNS:webhook.togglemaster.svc' \
+              -subj '/CN=self-healing.togglemaster.svc' \
+              -addext 'subjectAltName=DNS:self-healing.togglemaster.svc' \
               -addext 'basicConstraints=critical,CA:TRUE' \
               -addext 'keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign' \
               -addext 'extendedKeyUsage=serverAuth' >/dev/null 2>&1
           fi
           if ! openssl x509 -in "$work_dir/tls.crt" -checkend 604800 -noout >/dev/null; then
-            echo "Webhook TLS certificate is invalid or expires within seven days; disable the receiver and replace the credentials." >&2
+            echo "Self-healing TLS certificate is invalid or expires within seven days; disable the receiver and replace the credentials." >&2
             exit 1
           fi
-          openssl verify -purpose sslserver -verify_hostname webhook.togglemaster.svc \
+          openssl verify -purpose sslserver -verify_hostname self-healing.togglemaster.svc \
             -CAfile "$work_dir/tls.crt" "$work_dir/tls.crt" >/dev/null
           openssl x509 -in "$work_dir/tls.crt" -pubkey -noout > "$work_dir/cert.pub"
           openssl pkey -in "$work_dir/tls.key" -pubout > "$work_dir/key.pub"
           if ! cmp -s "$work_dir/cert.pub" "$work_dir/key.pub"; then
-            echo "Webhook TLS certificate and private key do not match." >&2
+            echo "Self-healing TLS certificate and private key do not match." >&2
             exit 1
           fi
           kubectl -n togglemaster create secret generic auth-self-healing-app \
             --from-literal="app-id=$APP_ID" --from-literal="installation-id=$INSTALLATION_ID" \
             --from-file="private-key.pem=$work_dir/app.pem" --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n togglemaster create secret generic webhook \
+          kubectl -n togglemaster create secret generic self-healing \
             --from-file="token=$work_dir/token" --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n togglemaster create secret tls auth-self-healing-tls \
+          kubectl -n togglemaster create secret tls self-healing-tls \
             --cert="$work_dir/tls.crt" --key="$work_dir/tls.key" --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n observability create secret generic webhook \
+          kubectl -n observability create secret generic self-healing \
             --from-file="token=$work_dir/token" --from-file="ca.crt=$work_dir/tls.crt" \
             --dry-run=client -o yaml | kubectl apply -f -
           if [[ "$versions_before" != "$(secret_versions)" ]]; then
-            deployment="$(kubectl -n togglemaster get deployment webhook --ignore-not-found -o name)"
+            deployment="$(kubectl -n togglemaster get deployment self-healing --ignore-not-found -o name)"
             if [[ -n "$deployment" ]]; then
-              kubectl -n togglemaster rollout restart deployment/webhook
-              kubectl -n togglemaster rollout status deployment/webhook --timeout=300s
+              kubectl -n togglemaster rollout restart deployment/self-healing
+              kubectl -n togglemaster rollout status deployment/self-healing --timeout=300s
             fi
           fi
-          echo "Webhook secrets ready. TLS certificate expiry:"
+          echo "Self-healing secrets ready. TLS certificate expiry:"
           openssl x509 -in "$work_dir/tls.crt" -noout -enddate
 
   config:
@@ -413,7 +413,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install validator dependencies
-        run: python -m pip install -r scripts/uat/requirements.txt
+        run: python -m pip install -r scripts/validate_apps/requirements.txt
 
       - name: Wait for application rollouts
         run: |
@@ -430,4 +430,4 @@ jobs:
         env:
           MASTER_KEY: ${{ secrets.MASTER_KEY }}
           PYTHONUNBUFFERED: "1"
-        run: python scripts/uat/user_testing.py
+        run: python scripts/validate_apps/validate_apps.py

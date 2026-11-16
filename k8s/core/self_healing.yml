@@ -1,17 +1,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: webhook
+  name: self-healing
   namespace: togglemaster
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: webhook
+      app: self-healing
   template:
     metadata:
       labels:
-        app: webhook
+        app: self-healing
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -20,8 +20,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: webhook
-          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/webhook:8a7d79cef09282a2ae48074286e8f6cd8db48461
+        - name: self-healing
+          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/self_healing:8a7d79cef09282a2ae48074286e8f6cd8db48461
           ports:
             - containerPort: 8443
           env:
@@ -61,8 +61,8 @@ spec:
             - name: app
               mountPath: /secrets/app
               readOnly: true
-            - name: webhook-token
-              mountPath: /secrets/webhook
+            - name: self-healing-token
+              mountPath: /secrets/self_healing
               readOnly: true
             - name: tls
               mountPath: /secrets/tls
@@ -71,22 +71,22 @@ spec:
         - name: app
           secret:
             secretName: auth-self-healing-app
-        - name: webhook-token
+        - name: self-healing-token
           secret:
-            secretName: webhook
+            secretName: self-healing
         - name: tls
           secret:
-            secretName: auth-self-healing-tls
+            secretName: self-healing-tls
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: webhook
+  name: self-healing
   namespace: togglemaster
 spec:
   type: ClusterIP
   selector:
-    app: webhook
+    app: self-healing
   ports:
     - port: 8443
       targetPort: 8443

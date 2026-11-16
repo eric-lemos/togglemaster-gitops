@@ -1,12 +1,12 @@
 # ToggleMaster GitOps
 
-Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow **K8s Operations**:
+Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow **K8s Ops**:
 
 ```bash
 kubectl apply -f k8s/core/argocd.yml
 ```
 
-Depois disso, o Argo CD acompanha a branch `main` deste repositório, aplica `k8s/kustomization.yaml` e mantém o namespace `togglemaster` sincronizado.
+Depois disso, o Argo CD acompanha a branch `main` deste repositório, aplica `k8s/kustomization.yml` e mantém o namespace `togglemaster` sincronizado.
 
 ## Fluxo de imagens
 
@@ -15,7 +15,7 @@ Cada pipeline de aplicação publica a imagem no ECR e atualiza o campo `image` 
 O repositório de apps precisa destas GitHub Variables:
 
 ```text
-GITOPS_REPOSITORY=eric-lemos/togglemaster-f3-gitops
+GITOPS_REPOSITORY=eric-lemos/togglemaster-gitops
 GITOPS_BRANCH=main
 GITOPS_AUTH_MANIFEST_PATH=k8s/apps/auth.yml
 GITOPS_EVALUATION_MANIFEST_PATH=k8s/apps/evaluation.yml
@@ -32,12 +32,13 @@ Os nodes do EKS precisam conseguir fazer pull dos repositórios privados ECR. A 
 
 ## Workflow manual
 
-O workflow `.github/workflows/gitops.yml` pode ser executado em **Actions > GitOps > Run workflow** com dois inputs independentes:
+O workflow `.github/workflows/operations.yml` pode ser executado em **Actions > K8s Ops > Run workflow** com três inputs independentes:
 
 - `Kubernetes Apply`: prepara os secrets de runtime e aplica os manifests Kubernetes e a Application do Argo CD.
-- `Run Postgres Schema Job`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
+- `Postgres Schema`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
+- `Validate Togglemaster`: aguarda os rollouts e executa o validador das aplicações.
 
-O workflow K8s Operations não instala charts nem executa Helm. Para criar ou atualizar os charts, execute o workflow Terraform em **Actions > Terraform CI > Run workflow** com `apply=true`. Ele aplica primeiro a infraestrutura e depois os charts em um state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
+O workflow K8s Ops não instala charts nem executa Helm. Em **Actions > Terraform Ops > Run workflow**, use **Apply Infra** para a infraestrutura e **Apply Helm** para os charts no state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
 
 ## Acesso à interface do Argo CD
 
@@ -69,9 +70,9 @@ Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no nave
 ### Execução do validador
 
 ```bash
-pip install -r scripts/uat/requirements.txt
-python3 scripts/uat/user_testing.py                       # descobre o ingress via kubectl
-python3 scripts/uat/user_testing.py --base-url http://<ENDERECO-DO-INGRESS>
+pip install -r scripts/validate_apps/requirements.txt
+python3 scripts/validate_apps/validate_apps.py                       # discovers ingress via kubectl
+python3 scripts/validate_apps/validate_apps.py --base-url http://<ENDERECO-DO-INGRESS>
 ```
 
 Sem `--base-url` (ou a variável `TOGGLEMASTER_BASE_URL`), o script lê
@@ -79,7 +80,7 @@ Sem `--base-url` (ou a variável `TOGGLEMASTER_BASE_URL`), o script lê
 até 300 segundos (`--ingress-timeout`) o endereço do ELB existir e resolver no
 DNS. A chave mestra vem da variável `MASTER_KEY`; sem ela, usa `togglemaster`.
 
-No workflow **GitOps**, marque `Validate Apps` para executar o mesmo script no
+No workflow **K8s Ops**, marque `Validate Togglemaster` para executar o mesmo script no
 GitHub Actions. O job roda depois de `Kubernetes Apply` e/ou do job de schema
 quando marcados (e é pulado se algum deles falhar), aguarda o rollout de todos
 os Deployments do namespace `togglemaster` e usa o secret `MASTER_KEY` do
@@ -87,7 +88,7 @@ repositório. A API key criada pelo teste é mascarada no log do Actions.
 
 ### Atualização da chave durante o teste local
 
-O script `scripts/uat/user_testing.py` executa `update_key_on_k8s` depois de
+O script `scripts/validate_apps/validate_apps.py` executa `update_key_on_k8s` depois de
 `update_rule`, antes das avaliações. Ele usa a API key criada pelo teste para
 criar ou atualizar `togglemaster-runtime/SERVICE_API_KEY` no namespace
 `togglemaster`, reinicia o Deployment `evaluation-service` e aguarda o rollout
@@ -118,26 +119,26 @@ O validador não consulta a SQS diretamente: registros da flag criada nesta
 execução no DynamoDB evidenciam o fluxo evaluation-service -> SQS ->
 analytics-service -> DynamoDB. Isso não comprova a exclusão das mensagens da fila.
 
-O Ingress expõe cada serviço usando um prefixo curto e remove esse prefixo antes
+O Ingress expõe cada serviço usando seu nome como prefixo e remove esse prefixo antes
 de encaminhar a requisição ao serviço:
 
 | Prefixo público | Serviço | Exemplos de endpoints |
 | --- | --- | --- |
-| `/auth` | `auth-service` | `GET /auth/health`, `GET /auth/validate`, `POST /auth/admin/keys` |
-| `/flag` | `flag-service` | `GET /flag/health`, `GET /flag/flags`, `POST /flag/flags`, `GET /flag/flags/{name}` |
-| `/targeting` | `targeting-service` | `GET /targeting/health`, `POST /targeting/rules`, `GET /targeting/rules/{flag_name}` |
-| `/evaluation` | `evaluation-service` | `GET /evaluation/health`, `GET /evaluation/evaluate?user_id=...&flag_name=...` |
-| `/analytics` | `analytics-service` | `GET /analytics/health` |
+| `/auth-service` | `auth-service` | `GET /auth-service/health`, `GET /auth-service/validate`, `POST /auth-service/admin/keys` |
+| `/flag-service` | `flag-service` | `GET /flag-service/health`, `GET /flag-service/flags`, `POST /flag-service/flags`, `PUT /flag-service/flags/{name}` |
+| `/targeting-service` | `targeting-service` | `GET /targeting-service/health`, `POST /targeting-service/rules`, `GET /targeting-service/rules/{flag_name}` |
+| `/evaluation-service` | `evaluation-service` | `GET /evaluation-service/health`, `GET /evaluation-service/evaluate?user_id=...&flag_name=...` |
+| `/analytics-service` | `analytics-service` | `GET /analytics-service/health` |
 
 O `analytics-service` é um worker de eventos; seu endpoint HTTP é apenas o health
 check. As operações de criação e alteração de flags e regras exigem uma API key
 no cabeçalho de autorização. O endpoint administrativo
-`POST /auth/admin/keys` exige a chave mestra configurada no serviço.
+`POST /auth-service/admin/keys` exige a chave mestra configurada no serviço.
 
 Para fazer requisições com `requests`, instale a dependência:
 
 ```bash
-python -m pip install -r scripts/uat/requirements.txt
+python -m pip install -r scripts/validate_apps/requirements.txt
 ```
 
 Exemplo de uso:
@@ -146,13 +147,13 @@ Exemplo de uso:
 import requests
 
 base_url = "http://<ENDERECO-EXTERNO-DO-INGRESS>"
-response = requests.get(f"{base_url}/auth/health", timeout=10)
+response = requests.get(f"{base_url}/auth-service/health", timeout=10)
 print(response.status_code)
 print(response.json())
 ```
 
 Consulte as rotas acima para usar o prefixo público correspondente ao serviço;
-por exemplo, o health do Auth é `/auth/health` (não `/auth-service/health`).
+por exemplo, o health do Auth é `/auth-service/health`.
 
 Configure no repositório GitOps:
 
@@ -212,8 +213,9 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
 O CronJob anterior foi removido dos manifests; o Argo CD remove seus recursos
 gerenciados após a publicação e sincronização. A nova arquitetura é
 Alertmanager → webhook interno HTTPS → GitHub App → GitHub Actions → EKS.
-Por padrão o receptor tem zero réplicas, a rota do Alertmanager está desativada
-e a Action só atua se a variável `SELF_HEALING_ENABLED` for `true`.
+O manifesto configura uma réplica do receptor, a rota do Alertmanager está
+desativada durante a migração e a Action só atua se a variável
+`SELF_HEALING_ENABLED` for `true`.
 
 O receptor aceita apenas notificações autenticadas do alerta
 `ToggleMasterAuthHighErrorRate` com `service=auth-service`. O repositório, a
@@ -240,41 +242,39 @@ serviço Prometheus e de `get`, `patch` e `watch` no Deployment
 com permissão **Actions: Read and write**. A operação de configuração também
 precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
 `togglemaster` e `observability`, e para reiniciar e acompanhar o Deployment
-`togglemaster/webhook`.
+`togglemaster/self-healing`.
 
-1. Publique as alterações dos repositórios Terraform e GitOps. Aplique o
-   Terraform para criar o repositório ECR `togglemaster/webhook`.
-   O valor `self_healing_webhook_enabled` do Helm deve continuar `false`.
-   Execute o workflow **K8s Operations** com **Kubernetes Apply** para atualizar também a
-   Application do Argo CD, que preserva a annotation de restart do receptor.
-2. O **Kubernetes Apply** executa antes o job **Image Build**, que constrói e
-   publica a imagem do receptor Python (`scripts/webhook`) e atualiza `image`
-   em `k8s/core/webhook.yml` com o hash de `scripts/webhook` como tag (sem
-   alterações no código, nada é reconstruído). O commit é enviado para `main` e o Argo CD sincroniza o manifesto,
-   respeitando o número de réplicas configurado. Se o webhook já tiver
-   réplicas ativas, uma nova imagem inicia o rollout do receptor. A operação
-   não reinicia o `auth-service`.
-   O token `GITHUB_TOKEN` do workflow precisa de permissão de escrita em
-   Contents, e a proteção de `main` deve permitir o push. Se os arquivos do
-   webhook mudarem durante o build, ou o push for rejeitado, execute o
-   workflow novamente na revisão atual de `main`.
-3. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
+1. Antes da migração, configure `SELF_HEALING_ENABLED=false` no GitHub.
+   Publique o Terraform com `self_healing_enabled = false` em
+   `helm/helm.auto.tfvars`. Com o EKS existente, execute **Terraform Ops →
+   Apply Helm** para desativar a rota e depois **Apply Infra**.
+   Isso cria o ECR `togglemaster/self_healing` e substitui o ECR antigo
+   `togglemaster/webhook`: **as imagens antigas serão excluídas**. O Argo CD
+   pode sincronizar antes de a nova imagem e os Secrets existirem; haverá
+   interrupção temporária do receptor até concluir os próximos passos.
+2. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
    `SELF_HEALING_APP_ID` (App ID em **General**) e
    `SELF_HEALING_INSTALLATION_ID` (ID na URL da instalação do App). Crie o
    secret `SELF_HEALING_APP_PRIVATE_KEY` com o conteúdo integral do arquivo
    `.pem`, incluindo as linhas BEGIN e END. Não adicione a chave ao Git nem a
    compartilhe em mensagens.
-   Execute **K8s Operations** com **Kubernetes Apply**. Ele cria ou atualiza os Secrets nas
-   duas namespaces, gera o token e o certificado TLS de 90 dias quando
-   necessário e reinicia apenas o receptor, caso seu Deployment já exista.
-   Os valores gerados permanecem no Kubernetes, não no state do Terraform.
-   A execução de `restart` não modifica esses Secrets. Repita a configuração
-   após atualizar a chave do GitHub App ou recriar o cluster.
-4. Altere `replicas` para `1` no manifesto do receptor, publique o GitOps e
-   aguarde o Deployment ficar pronto. Configure a variável de repositório
-   `SELF_HEALING_ENABLED=true` no GitHub somente quando autorizar reinícios.
-5. No repositório Terraform, defina `self_healing_webhook_enabled = true` em
-   `helm/helm.auto.tfvars`, publique e aplique o Terraform. A rota específica
+3. Publique o GitOps e execute **K8s Ops** com **Kubernetes Apply**. O job **Image Build** publica
+   a imagem de `scripts/self_healing` e atualiza `k8s/core/self_healing.yml`
+   com o hash do diretório como tag. O commit é enviado para `main`; o
+   `GITHUB_TOKEN` precisa de permissão de escrita em Contents e a proteção de
+   `main` deve permitir o push. Se o código mudar durante o build ou o push
+   falhar, execute novamente na revisão atual de `main`.
+   A operação aplica os manifests e cria os novos Secrets `self-healing` nas
+   duas namespaces e `self-healing-tls` em `togglemaster`, incluindo um novo
+   certificado TLS de 90 dias para `self-healing.togglemaster.svc`. Ela
+   reinicia apenas o receptor se necessário, não o `auth-service`. Os Secrets
+   antigos não são removidos automaticamente. Os valores gerados permanecem
+   no Kubernetes, não no state do Terraform. Repita a configuração após
+   atualizar a chave do GitHub App ou recriar o cluster.
+4. Confirme que o Deployment `self-healing` está pronto. Somente quando
+   autorizar reinícios, configure `SELF_HEALING_ENABLED=true` no GitHub.
+5. No repositório Terraform, defina `self_healing_enabled = true` em
+   `helm/helm.auto.tfvars`, publique e execute **Terraform Ops → Apply Helm**. A rota específica
    repete notificações a cada 2 minutos; o Discord e o PagerDuty também
    recebem repetições a cada 2 minutos enquanto o alerta permanecer ativo.
 6. Valide o fluxo com uma falha controlada autorizada, conferindo o alerta no
@@ -286,16 +286,32 @@ GitHub; execuções já iniciadas não são canceladas. Desative também a rota 
 e volte o receptor para zero réplicas nos manifests. A Action pode ser
 acionada manualmente, mas sempre aplica as mesmas verificações.
 O webhook dispara o workflow **Self Healing**, que executa
-`python3 scripts/webhook/self_healing.py --restart` no runner; sem essa flag o
+`python3 scripts/self_healing/self_healing.py --restart` no runner; sem essa flag o
 mesmo arquivo inicia o servidor HTTPS do receptor.
-
-Ao renomear o workflow de self-healing, publique as alterações e execute
-**K8s Operations** com **Kubernetes Apply** para reconstruir a imagem do
-webhook com o novo caminho. Até a atualização do receptor, o dispatch pode
-falhar porque a imagem anterior ainda aponta para o arquivo antigo.
 
 O workflow mostra a data de expiração do certificado sem expor credenciais.
 Ele não faz rotação automática: um certificado inválido ou com menos de sete
 dias de validade e divergências entre os Secrets interrompem a configuração.
 Para o laboratório, um cluster recriado recebe novas credenciais no próximo apply.
-  
+
+### Simulação local de erro
+
+Somente em um ambiente de teste autorizado, com o self-healing configurado e
+`SELF_HEALING_ENABLED=true` no GitHub, execute o script abaixo. Ele gera 80
+respostas HTTP 500 controladas no auth-service e pode provocar um restart real.
+Não execute em produção.
+
+Configure o `kubectl` para o cluster correto e garanta acesso aos Deployments,
+ao port-forward do auth-service e ao proxy do Prometheus. No Bash:
+
+```bash
+read -rs -p "Master key: " MASTER_KEY; echo
+export MASTER_KEY SELF_HEALING_ENABLED=true
+python3 scripts/simulate_error/simulate_error.py
+unset MASTER_KEY SELF_HEALING_ENABLED
+```
+
+A variável local `SELF_HEALING_ENABLED` é uma confirmação exigida pelo script;
+ela não altera nem verifica a variável do GitHub. O script acompanha o alerta
+e o rollout, mas a entrega ao Discord e ao PagerDuty deve ser conferida
+separadamente.

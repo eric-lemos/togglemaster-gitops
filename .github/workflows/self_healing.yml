@@ -31,4 +31,4 @@ jobs:
           EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
       - name: Check alert and restart if allowed
-        run: python3 scripts/webhook/self_healing.py --restart
+        run: python3 scripts/self_healing/self_healing.py --restart

@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/eric-lemos/togglemaster-f3-gitops.git
+    repoURL: https://github.com/eric-lemos/togglemaster-gitops.git
     targetRevision: main
     path: k8s
   destination:
@@ -22,7 +22,7 @@ spec:
         - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
     - group: apps
       kind: Deployment
-      name: webhook
+      name: self-healing
       namespace: togglemaster
       jsonPointers:
         - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt

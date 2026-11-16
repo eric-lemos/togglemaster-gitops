@@ -241,15 +241,15 @@ def serve():
     key = serialization.load_pem_private_key(Path("/secrets/app/private-key.pem").read_bytes(), password=None)
     if not isinstance(key, rsa.RSAPrivateKey):
         raise ValueError("GitHub App key must be RSA")
-    token = Path("/secrets/webhook/token").read_text(encoding="utf-8")
+    token = Path("/secrets/self_healing/token").read_text(encoding="utf-8")
     if len(token) < 32 or token.strip() != token:
-        raise ValueError("Invalid webhook token")
+        raise ValueError("Invalid self-healing token")
     server = WebhookServer(("", 8443), WebhookHandler)
     server.app_id, server.installation_id, server.key, server.token = app_id, installation_id, key, token
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain("/secrets/tls/tls.crt", "/secrets/tls/tls.key")
     server.tls_context = context
-    print("GitHub webhook listening on port 8443", flush=True)
+    print("Self-healing receiver listening on port 8443", flush=True)
     server.serve_forever()
 
 def main():
