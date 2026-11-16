@@ -224,7 +224,7 @@ jobs:
     name: Configure Secrets
     runs-on: ubuntu-latest
     needs: deploy
-    if: inputs.kubernetes_apply
+    if: ${{ !cancelled() && inputs.kubernetes_apply && needs.deploy.result == 'success' }}
     timeout-minutes: 10
     steps:
       - name: Configure AWS credentials
