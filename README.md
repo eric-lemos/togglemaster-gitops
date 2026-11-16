@@ -36,17 +36,18 @@ Os nodes do EKS precisam conseguir fazer pull dos repositórios privados ECR. A 
 
 O workflow `.github/workflows/operations.yml` pode ser executado em **Actions > K8s Ops > Run workflow**:
 
-- `Helm Apply`: instala ou atualiza os sete releases Helm; pode ser executado isoladamente.
-- `Kubernetes Apply`: prepara os secrets de runtime e aplica os manifests Kubernetes e a Application do Argo CD.
+- `Apply`: executa Image Build e Apply Helm Charts em paralelo, aplica os manifests Kubernetes após ambos e configura os Secrets de self-healing.
 - `Postgres Schema`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
 - `Validate Togglemaster`: aguarda os rollouts e executa o validador das aplicações.
 
 Primeiro execute **Terraform Ops → Apply Infra**. Depois, no GitOps, selecione
-**Helm Apply** e, se desejado, **Kubernetes Apply**, **Postgres Schema** e
-**Validate Togglemaster**. Quando Helm e Kubernetes Apply são selecionados
-juntos, os charts devem ser instalados com sucesso antes dos manifests; os jobs
-selecionados de schema e validação também aguardam Helm. Uma falha impede os
-passos dependentes. O build da imagem pode ocorrer em paralelo ao Helm.
+**Apply** para executar o fluxo completo na branch `main`. Os jobs de schema e
+validação são opcionais e só executam quando selecionados. O schema é
+independente e pode rodar em paralelo ao Apply; garanta que seus pré-requisitos
+já estejam disponíveis. A validação aguarda Configure Secrets quando Apply
+também é selecionado, mas não aguarda o schema. Para validar após o schema,
+execute a validação em uma execução posterior. Uma falha impede os passos
+dependentes.
 
 Os valores e dashboards estão em `helm/`; os charts fixados são monitoring
 92.17.0, Loki 7.5.0, OpenTelemetry Collector 0.178.2 (agent e gateway),
@@ -108,8 +109,8 @@ até 300 segundos (`--ingress-timeout`) o endereço do ELB existir e resolver no
 DNS. A chave mestra vem da variável `MASTER_KEY`; sem ela, usa `togglemaster`.
 
 No workflow **K8s Ops**, marque `Validate Togglemaster` para executar o mesmo script no
-GitHub Actions. O job roda depois de `Kubernetes Apply` e/ou do job de schema
-quando marcados (e é pulado se algum deles falhar), aguarda o rollout de todos
+GitHub Actions. Se `Apply` também estiver marcado, o job aguarda Configure
+Secrets e é pulado se o Apply falhar. Ele não depende do job de schema. Aguarda o rollout de todos
 os Deployments do namespace `togglemaster` e usa o secret `MASTER_KEY` do
 repositório. A API key criada pelo teste é mascarada no log do Actions.
 
@@ -241,7 +242,7 @@ O CronJob anterior foi removido dos manifests; o Argo CD remove seus recursos
 gerenciados após a publicação e sincronização. A nova arquitetura é
 Alertmanager → webhook interno HTTPS → GitHub App → GitHub Actions → EKS.
 O manifesto configura uma réplica do receptor. `SELF_HEALING_ENABLED` autoriza
-reinícios e controla a rota do Alertmanager no próximo Helm Apply.
+reinícios e controla a rota do Alertmanager no próximo Apply.
 
 O receptor aceita apenas notificações autenticadas do alerta
 `ToggleMasterAuthHighErrorRate` com `service=auth-service`. O repositório, a
@@ -271,15 +272,15 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
 `togglemaster/self-healing`.
 
 1. Configure `SELF_HEALING_ENABLED=false` no GitHub. Crie a infraestrutura
-   com **Terraform Ops → Apply Infra** e instale os charts com **K8s Ops →
-   Helm Apply**. A rota permanece desativada na primeira instalação.
+   com **Terraform Ops → Apply Infra**. A rota permanece desativada na primeira
+   instalação.
 2. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
    `SELF_HEALING_APP_ID` (App ID em **General**) e
    `SELF_HEALING_INSTALLATION_ID` (ID na URL da instalação do App). Crie o
    secret `SELF_HEALING_APP_PRIVATE_KEY` com o conteúdo integral do arquivo
    `.pem`, incluindo as linhas BEGIN e END. Não adicione a chave ao Git nem a
    compartilhe em mensagens.
-3. Publique o GitOps e execute **K8s Ops** com **Kubernetes Apply**. O job **Image Build** publica
+3. Publique o GitOps e execute **K8s Ops → Apply**. O job **Image Build** publica
    a imagem de `scripts/self_healing` e atualiza `k8s/core/self_healing.yml`
    com o hash do diretório como tag. O commit é enviado para `main`; o
    `GITHUB_TOKEN` precisa de permissão de escrita em Contents e a proteção de
@@ -294,7 +295,7 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
    atualizar a chave do GitHub App ou recriar o cluster.
 4. Confirme que o Deployment `self-healing` está pronto. Somente quando
    autorizar reinícios, configure `SELF_HEALING_ENABLED=true` no GitHub e
-   execute **K8s Ops → Helm Apply**. O job exige o Secret `observability/self-healing`
+   execute **K8s Ops → Apply** novamente. O job Helm exige o Secret `observability/self-healing`
    antes de habilitar a rota. A rota específica
    repete notificações a cada 2 minutos; o Discord e o PagerDuty também
    recebem repetições a cada 2 minutos enquanto o alerta permanecer ativo.
@@ -303,7 +304,7 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
    alerta sintético enviado apenas ao Alertmanager não autoriza restart.
 
 Para suspender novas ações, altere `SELF_HEALING_ENABLED` para `false` no
-GitHub; execuções já iniciadas não são canceladas. Execute **Helm Apply** para
+GitHub; execuções já iniciadas não são canceladas. Execute **Apply** para
 desativar a rota; até então o Alertmanager ainda pode enviar notificações.
 Volte o receptor para zero réplicas nos manifests. A Action pode ser
 acionada manualmente, mas sempre aplica as mesmas verificações.

@@ -3,13 +3,8 @@ name: K8s Ops
 on:
   workflow_dispatch:
     inputs:
-      helm_apply:
-        description: "Helm Apply"
-        required: true
-        default: false
-        type: boolean
-      kubernetes_apply:
-        description: "Kubernetes Apply"
+      apply:
+        description: "Apply"
         required: true
         default: false
         type: boolean
@@ -39,8 +34,14 @@ jobs:
   helm:
     name: Apply Helm Charts
     runs-on: ubuntu-latest
-    if: inputs.helm_apply
+    if: inputs.apply
     steps:
+      - name: Require main branch
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Apply must run from main because it commits the self-healing image." >&2
+            exit 1
+          fi
       - name: Checkout GitOps repository
         uses: actions/checkout@v5
       - name: Configure AWS credentials
@@ -68,14 +69,14 @@ jobs:
   image:
     name: Image Build
     runs-on: ubuntu-latest
-    if: inputs.kubernetes_apply
+    if: inputs.apply
     permissions:
       contents: write
     steps:
       - name: Require main branch
         run: |
           if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "Kubernetes Apply must run from main because it commits the self-healing image." >&2
+            echo "Apply must run from main because it commits the self-healing image." >&2
             exit 1
           fi
 
@@ -157,7 +158,7 @@ jobs:
     name: Apply K8s Manifests
     runs-on: ubuntu-latest
     needs: [image, helm]
-    if: ${{ !cancelled() && inputs.kubernetes_apply && needs.image.result == 'success' && (!inputs.helm_apply || needs.helm.result == 'success') }}
+    if: ${{ !cancelled() && inputs.apply && needs.image.result == 'success' && needs.helm.result == 'success' }}
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v5
@@ -224,7 +225,7 @@ jobs:
     name: Configure Secrets
     runs-on: ubuntu-latest
     needs: deploy
-    if: ${{ !cancelled() && inputs.kubernetes_apply && needs.deploy.result == 'success' }}
+    if: ${{ !cancelled() && inputs.apply && needs.deploy.result == 'success' }}
     timeout-minutes: 10
     steps:
       - name: Configure AWS credentials
@@ -350,8 +351,7 @@ jobs:
   config:
     name: Postgres Schema
     runs-on: ubuntu-latest
-    needs: helm
-    if: ${{ !cancelled() && inputs.run_postgres_schema_job && (!inputs.helm_apply || needs.helm.result == 'success') }}
+    if: inputs.run_postgres_schema_job
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v5
@@ -425,8 +425,8 @@ jobs:
   validate:
     name: Validate Togglemaster
     runs-on: ubuntu-latest
-    needs: [helm, image, deploy, secrets, config]
-    if: ${{ !cancelled() && inputs.validate_apps && (!inputs.helm_apply || needs.helm.result == 'success') && (!inputs.kubernetes_apply || needs.secrets.result == 'success') && (!inputs.run_postgres_schema_job || needs.config.result == 'success') }}
+    needs: secrets
+    if: ${{ !cancelled() && inputs.validate_apps && (!inputs.apply || needs.secrets.result == 'success') }}
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v5
