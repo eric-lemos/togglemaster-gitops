@@ -1,0 +1,69 @@
+fullnameOverride: otel-agent
+mode: daemonset
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.163.2"
+command:
+  name: otelcol-contrib
+presets:
+  logsCollection:
+    enabled: true
+    includeCollectorLogs: false
+  kubernetesAttributes:
+    enabled: true
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+ports:
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+config:
+  receivers:
+    otlp: null
+    jaeger: null
+    zipkin: null
+    prometheus: null
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_mib: 96
+      spike_limit_mib: 24
+      limit_percentage: null
+      spike_limit_percentage: null
+    resource/service:
+      attributes:
+        - key: service.name
+          from_attribute: k8s.container.name
+          action: insert
+  exporters:
+    debug: null
+    otlp/gateway:
+      endpoint: otel-gateway.observability.svc.cluster.local:4317
+      tls:
+        insecure: true
+      sending_queue:
+        queue_size: 256
+      retry_on_failure:
+        enabled: true
+  service:
+    pipelines:
+      traces: null
+      metrics: null
+      logs:
+        receivers: []
+        processors: [memory_limiter, resource/service, batch]
+        exporters: [otlp/gateway]

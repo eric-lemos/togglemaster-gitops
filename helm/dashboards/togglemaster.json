@@ -1,0 +1,182 @@
+{
+  "uid": "togglemaster-ecosystem",
+  "title": "ToggleMaster - Ecosystem",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "togglemaster"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "CPU usage by service (cores)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"togglemaster\",container=~\"$app\",container!=\"\",container!=\"POD\"}[5m]))",
+          "legendFormat": "{{container}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Memory working set by service",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"togglemaster\",container=~\"$app\",container!=\"\",container!=\"POD\"})",
+          "legendFormat": "{{container}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Container restarts in the last 30 minutes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=\"togglemaster\",container=~\"$app\"}[30m]))",
+          "legendFormat": "{{container}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "HTTP requests per second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$app\"}[5m]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "ToggleMaster container logs",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{k8s_namespace_name=\"togglemaster\", k8s_container_name=~\"$app\"} |~ `(?i)${search:regex}`",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "app",
+        "label": "App",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_pod_container_info{namespace=\"togglemaster\"}, container)",
+          "refId": "AppVariable"
+        },
+        "definition": "label_values(kube_pod_container_info{namespace=\"togglemaster\"}, container)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*-service",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "search",
+        "label": "Search logs",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      }
+    ]
+  }
+}

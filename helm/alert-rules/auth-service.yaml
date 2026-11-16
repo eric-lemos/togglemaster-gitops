@@ -1,0 +1,19 @@
+groups:
+  - name: togglemaster.auth-service
+    interval: 15s
+    rules:
+      - alert: ToggleMasterAuthHighErrorRate
+        expr: |
+          (
+            100 * sum(increase(http_server_request_duration_seconds_count{service_name="auth-service",http_response_status_code=~"5.."}[5m]))
+            / sum(increase(http_server_request_duration_seconds_count{service_name="auth-service"}[5m]))
+          ) > 5
+          and
+          sum(increase(http_server_request_duration_seconds_count{service_name="auth-service"}[5m])) >= 10
+        for: 30s
+        labels:
+          severity: warning
+          service: auth-service
+        annotations:
+          summary: High HTTP error rate in auth-service
+          description: The auth-service 5xx error rate has exceeded 5% for 30 seconds, with at least 10 estimated requests in the 5-minute window.

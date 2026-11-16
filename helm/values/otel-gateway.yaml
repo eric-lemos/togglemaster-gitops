@@ -1,0 +1,67 @@
+fullnameOverride: otel-gateway
+mode: deployment
+replicaCount: 1
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.163.2"
+command:
+  name: otelcol-contrib
+presets:
+  kubernetesAttributes:
+    enabled: true
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+ports:
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+  prometheus:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_mib: 192
+      spike_limit_mib: 48
+      limit_percentage: null
+      spike_limit_percentage: null
+  exporters:
+    debug: null
+    prometheus:
+      endpoint: 0.0.0.0:8889
+      resource_to_telemetry_conversion:
+        enabled: true
+    otlphttp/loki:
+      endpoint: http://loki.observability.svc.cluster.local:3100/otlp
+      sending_queue:
+        queue_size: 256
+      retry_on_failure:
+        enabled: true
+  service:
+    pipelines:
+      traces: null
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheus]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlphttp/loki]

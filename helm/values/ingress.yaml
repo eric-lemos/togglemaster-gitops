@@ -1,0 +1,10 @@
+controller:
+  ingressClass: nginx
+  watchIngressWithoutClass: false
+  admissionWebhooks:
+    enabled: false
+  ingressClassResource:
+    enabled: true
+    name: nginx
+  service:
+    type: LoadBalancer

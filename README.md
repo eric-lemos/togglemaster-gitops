@@ -1,6 +1,8 @@
 # ToggleMaster GitOps
 
-Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow **K8s Ops**:
+Manifests Kubernetes gerenciados pelo Argo CD. O Terraform cria a infraestrutura
+AWS; o workflow GitOps instala os charts usando Helm CLI. Esta aplicação é
+registrada no Argo CD pelo workflow **K8s Ops**:
 
 ```bash
 kubectl apply -f k8s/core/argocd.yml
@@ -32,13 +34,38 @@ Os nodes do EKS precisam conseguir fazer pull dos repositórios privados ECR. A 
 
 ## Workflow manual
 
-O workflow `.github/workflows/operations.yml` pode ser executado em **Actions > K8s Ops > Run workflow** com três inputs independentes:
+O workflow `.github/workflows/operations.yml` pode ser executado em **Actions > K8s Ops > Run workflow**:
 
+- `Helm Apply`: instala ou atualiza os sete releases Helm; pode ser executado isoladamente.
 - `Kubernetes Apply`: prepara os secrets de runtime e aplica os manifests Kubernetes e a Application do Argo CD.
 - `Postgres Schema`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
 - `Validate Togglemaster`: aguarda os rollouts e executa o validador das aplicações.
 
-O workflow K8s Ops não instala charts nem executa Helm. Em **Actions > Terraform Ops > Run workflow**, use **Apply Infra** para a infraestrutura e **Apply Helm** para os charts no state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
+Primeiro execute **Terraform Ops → Apply Infra**. Depois, no GitOps, selecione
+**Helm Apply** e, se desejado, **Kubernetes Apply**, **Postgres Schema** e
+**Validate Togglemaster**. Quando Helm e Kubernetes Apply são selecionados
+juntos, os charts devem ser instalados com sucesso antes dos manifests; os jobs
+selecionados de schema e validação também aguardam Helm. Uma falha impede os
+passos dependentes. O build da imagem pode ocorrer em paralelo ao Helm.
+
+Os valores e dashboards estão em `helm/`; os charts fixados são monitoring
+92.17.0, Loki 7.5.0, OpenTelemetry Collector 0.178.2 (agent e gateway),
+Ingress NGINX 4.15.1, Metrics Server 3.14.0 e Argo CD 10.6.0. O Helm CLI
+gerencia os releases diretamente, sem state Terraform. O destroy do Terraform
+desinstala os sete releases conhecidos antes de destruir o EKS. O state Helm
+antigo não é removido automaticamente e não deve mais ser aplicado.
+
+Configure no GitOps os secrets `DISCORD_WEBHOOK_URL` (URL original, sem
+`/slack`) e `PAGERDUTY_INTEGRATION_KEY` (Events API v2), além das credenciais
+AWS e da variável `EKS_CLUSTER_NAME`. O job cria os Secrets Kubernetes de
+notificação e, se ainda não existir, `monitoring-ui-basic-auth`, com senha
+aleatória e hash bcrypt. A senha permanece no Secret Kubernetes, não no state
+Terraform; não a compartilhe. O acesso HTTP não é seguro para produção.
+Para consultar a senha do basic auth localmente:
+
+```bash
+kubectl -n observability get secret monitoring-ui-basic-auth -o jsonpath='{.data.password}' | base64 --decode; echo
+```
 
 ## Acesso à interface do Argo CD
 
@@ -202,7 +229,7 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
 - Traces e logs ficam desligados nos manifests (`OTEL_TRACES_EXPORTER=none` e
   `OTEL_LOGS_EXPORTER=none`). Os logs já chegam ao Loki pelo agent.
 - Para ativar traces depois do APM, altere `OTEL_TRACES_EXPORTER` e habilite o
-  pipeline de traces no `otel-gateway` (repositório Terraform).
+  pipeline de traces no `otel-gateway` (repositório GitOps).
 - O evaluation-service grava o contexto de trace nos atributos das mensagens SQS
   e o analytics-service o lê, para o fluxo aparecer como um único trace.
 - Os serviços Python usam `opentelemetry-instrument` via `gunicorn.conf.py`; os
@@ -244,14 +271,10 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
 `togglemaster` e `observability`, e para reiniciar e acompanhar o Deployment
 `togglemaster/self-healing`.
 
-1. Antes da migração, configure `SELF_HEALING_ENABLED=false` no GitHub.
-   Publique o Terraform com `self_healing_enabled = false` em
-   `helm/helm.auto.tfvars`. Com o EKS existente, execute **Terraform Ops →
-   Apply Helm** para desativar a rota e depois **Apply Infra**.
-   Isso cria o ECR `togglemaster/self_healing` e substitui o ECR antigo
-   `togglemaster/webhook`: **as imagens antigas serão excluídas**. O Argo CD
-   pode sincronizar antes de a nova imagem e os Secrets existirem; haverá
-   interrupção temporária do receptor até concluir os próximos passos.
+1. Configure `SELF_HEALING_ENABLED=false` e
+   `SELF_HEALING_ALERT_ROUTE_ENABLED=false` no GitHub. Crie a infraestrutura
+   com **Terraform Ops → Apply Infra** e instale os charts com **K8s Ops →
+   Helm Apply**. A rota permanece desativada na primeira instalação.
 2. Nas configurações de **Actions** do repositório GitOps, crie as variáveis
    `SELF_HEALING_APP_ID` (App ID em **General**) e
    `SELF_HEALING_INSTALLATION_ID` (ID na URL da instalação do App). Crie o
@@ -273,8 +296,9 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
    atualizar a chave do GitHub App ou recriar o cluster.
 4. Confirme que o Deployment `self-healing` está pronto. Somente quando
    autorizar reinícios, configure `SELF_HEALING_ENABLED=true` no GitHub.
-5. No repositório Terraform, defina `self_healing_enabled = true` em
-   `helm/helm.auto.tfvars`, publique e execute **Terraform Ops → Apply Helm**. A rota específica
+5. Defina `SELF_HEALING_ALERT_ROUTE_ENABLED=true` no GitOps e execute
+   **K8s Ops → Helm Apply**. O job exige o Secret `observability/self-healing`
+   antes de habilitar a rota. A rota específica
    repete notificações a cada 2 minutos; o Discord e o PagerDuty também
    recebem repetições a cada 2 minutos enquanto o alerta permanecer ativo.
 6. Valide o fluxo com uma falha controlada autorizada, conferindo o alerta no
@@ -282,8 +306,9 @@ precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
    alerta sintético enviado apenas ao Alertmanager não autoriza restart.
 
 Para suspender novas ações, altere `SELF_HEALING_ENABLED` para `false` no
-GitHub; execuções já iniciadas não são canceladas. Desative também a rota Helm
-e volte o receptor para zero réplicas nos manifests. A Action pode ser
+GitHub; execuções já iniciadas não são canceladas. Defina também
+`SELF_HEALING_ALERT_ROUTE_ENABLED=false` e execute **Helm Apply** para desativar
+a rota; volte o receptor para zero réplicas nos manifests. A Action pode ser
 acionada manualmente, mas sempre aplica as mesmas verificações.
 O webhook dispara o workflow **Self Healing**, que executa
 `python3 scripts/self_healing/self_healing.py --restart` no runner; sem essa flag o

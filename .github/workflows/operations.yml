@@ -3,6 +3,11 @@ name: K8s Ops
 on:
   workflow_dispatch:
     inputs:
+      helm_apply:
+        description: "Helm Apply"
+        required: true
+        default: false
+        type: boolean
       kubernetes_apply:
         description: "Kubernetes Apply"
         required: true
@@ -31,6 +36,35 @@ env:
   EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
 
 jobs:
+  helm:
+    name: Apply Helm Charts
+    runs-on: ubuntu-latest
+    if: inputs.helm_apply
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v5
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.21.2
+      - name: Configure kubectl
+        run: |
+          aws eks wait cluster-active --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+      - name: Install or upgrade charts
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PAGERDUTY_INTEGRATION_KEY: ${{ secrets.PAGERDUTY_INTEGRATION_KEY }}
+          SELF_HEALING_ALERT_ROUTE_ENABLED: ${{ vars.SELF_HEALING_ALERT_ROUTE_ENABLED }}
+        run: bash scripts/helm/apply.sh
+
   image:
     name: Image Build
     runs-on: ubuntu-latest
@@ -122,8 +156,8 @@ jobs:
   deploy:
     name: Apply K8s Manifests
     runs-on: ubuntu-latest
-    needs: image
-    if: inputs.kubernetes_apply
+    needs: [image, helm]
+    if: ${{ !cancelled() && inputs.kubernetes_apply && needs.image.result == 'success' && (!inputs.helm_apply || needs.helm.result == 'success') }}
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v5
@@ -316,7 +350,8 @@ jobs:
   config:
     name: Postgres Schema
     runs-on: ubuntu-latest
-    if: inputs.run_postgres_schema_job
+    needs: helm
+    if: ${{ !cancelled() && inputs.run_postgres_schema_job && (!inputs.helm_apply || needs.helm.result == 'success') }}
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v5
@@ -390,8 +425,8 @@ jobs:
   validate:
     name: Validate Togglemaster
     runs-on: ubuntu-latest
-    needs: [secrets, config]
-    if: ${{ !cancelled() && inputs.validate_apps && !contains(needs.*.result, 'failure') }}
+    needs: [helm, image, deploy, secrets, config]
+    if: ${{ !cancelled() && inputs.validate_apps && (!inputs.helm_apply || needs.helm.result == 'success') && (!inputs.kubernetes_apply || needs.secrets.result == 'success') && (!inputs.run_postgres_schema_job || needs.config.result == 'success') }}
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v5
