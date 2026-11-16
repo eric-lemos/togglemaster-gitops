@@ -320,7 +320,7 @@ Para o laboratório, um cluster recriado recebe novas credenciais no próximo ap
 
 Em um laboratório autorizado, configure e valide o self-healing, defina
 `SELF_HEALING_ENABLED=true` e execute **Actions → Simulate Error → Run workflow**
-na branch `main`, marcando a confirmação. O workflow usa as credenciais AWS e
+na branch `main`. O workflow usa as credenciais AWS e
 `MASTER_KEY` do repositório, configura o acesso ao EKS e executa
 `scripts/simulate_error/simulate_error.py`.
 
