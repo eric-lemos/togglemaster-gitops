@@ -327,7 +327,9 @@ na branch `main`. O workflow usa as credenciais AWS e
 
 O script gera 80 respostas HTTP 500 reais e controladas no `auth-service`,
 acompanha o alerta no Prometheus, aguarda um restart e seu rollout e monitora
-o alerta até ficar inativo. Após o rollout, espera até 10 minutos pela
+o alerta até ficar inativo. A regra usa uma janela de 2 minutos e exige
+mais de 5% de erros e pelo menos 10 requisições estimadas por 30 segundos.
+Após o rollout, o script espera até 10 minutos pela
 resolução e falha caso o alerta permaneça ativo. A execução pode gerar
 notificações reais no Discord e no PagerDuty; confirme a entrega e a resolução
 das notificações separadamente. Não execute em produção. É necessário acesso

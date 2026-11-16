@@ -240,7 +240,7 @@ def main() -> None:
     title("3. Observation: telemetry and alert")
     print(
         "OpenTelemetry exports metrics; Prometheus evaluates 5xx errors over a "
-        "5-minute window and requires more than 5% and at least 10 estimated requests.",
+        "2-minute window and requires more than 5% and at least 10 estimated requests.",
         flush=True,
     )
     subtitle("Checking the alert state in Prometheus")
@@ -258,7 +258,7 @@ def main() -> None:
     if repository:
         print(f"GitHub Actions: https://github.com/{repository}/actions/workflows/self_healing.yml")
     title("5. Resolution: waiting for the alert to close")
-    print("The alert can remain active until the errors leave the 5-minute window.", flush=True)
+    print("The alert can remain active until the errors leave the 2-minute window.", flush=True)
     subtitle("Checking that the alert becomes inactive in Prometheus")
     wait_for_alert(resolved=True, timeout=600)
     print("The alert is inactive in Prometheus. Check notification resolution separately.", flush=True)
