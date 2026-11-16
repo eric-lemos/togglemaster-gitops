@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       kubernetes_apply:
-        description: "Kubernetes Apply (Image Build, K8s Apply and Configure Secrets)"
+        description: "Kubernetes Apply: (Image Build, K8s Apply and Configure Secrets)"
         required: true
         default: false
         type: boolean
       rotate_webhook_credentials:
-        description: "Kubernetes Apply: rotate webhook token and TLS certificate (requires zero webhook replicas)"
+        description: "Kubernetes Apply: Rotate Webhook Token and TLS Certificate"
         required: true
         default: false
         type: boolean
