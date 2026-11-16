@@ -240,8 +240,7 @@ serviço Prometheus e de `get`, `patch` e `watch` no Deployment
 com permissão **Actions: Read and write**. A operação de configuração também
 precisa de permissões para ler e criar/atualizar os Secrets nas namespaces
 `togglemaster` e `observability`, e para reiniciar e acompanhar o Deployment
-`togglemaster/webhook`. A rotação também precisa listar os pods do
-receptor.
+`togglemaster/webhook`.
 
 1. Publique as alterações dos repositórios Terraform e GitOps. Aplique o
    Terraform para criar o repositório ECR `togglemaster/webhook`.
@@ -265,8 +264,7 @@ receptor.
    secret `SELF_HEALING_APP_PRIVATE_KEY` com o conteúdo integral do arquivo
    `.pem`, incluindo as linhas BEGIN e END. Não adicione a chave ao Git nem a
    compartilhe em mensagens.
-   Execute **Kubernetes Ops** com **Kubernetes Apply** e
-   `rotate_webhook_credentials=false`. Ele cria ou atualiza os Secrets nas
+   Execute **Kubernetes Ops** com **Kubernetes Apply**. Ele cria ou atualiza os Secrets nas
    duas namespaces, gera o token e o certificado TLS de 90 dias quando
    necessário e reinicia apenas o receptor, caso seu Deployment já exista.
    Os valores gerados permanecem no Kubernetes, não no state do Terraform.
@@ -291,16 +289,8 @@ O webhook dispara o workflow **Kubernetes Self Healing**, que executa
 `python3 scripts/webhook/self_healing.py --restart` no runner; sem essa flag o
 mesmo arquivo inicia o servidor HTTPS do receptor.
 
-### Renovação do token e do certificado
-
 O workflow mostra a data de expiração do certificado sem expor credenciais.
-Para renová-lo ou trocar o token, desative a rota no Helm, publique
-`replicas: 0` para o receptor e aguarde a sincronização do Argo CD. Depois,
-execute **Kubernetes Ops** com **Kubernetes Apply** e
-`rotate_webhook_credentials=true`. A rotação exige zero réplicas e que todos
-os pods do receptor tenham terminado, e atualiza os Secrets dos dois lados;
-reative o receptor e a rota após a conclusão. Existe
-uma interrupção de notificações de self-healing durante essa manutenção.
-Se uma execução falhar parcialmente, mantenha o receptor desativado e repita
-a rotação. Sem rotação, divergências entre os Secrets são tratadas como erro.
+Ele não faz rotação automática: um certificado inválido ou com menos de sete
+dias de validade e divergências entre os Secrets interrompem a configuração.
+Para o laboratório, um cluster recriado recebe novas credenciais no próximo apply.
   

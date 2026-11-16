@@ -4,12 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       kubernetes_apply:
-        description: "Kubernetes Apply: (Image Build, K8s Apply and Configure Secrets)"
-        required: true
-        default: false
-        type: boolean
-      rotate_webhook_credentials:
-        description: "Kubernetes Apply: Rotate Webhook Token and TLS Certificate"
+        description: "Kubernetes Apply"
         required: true
         default: false
         type: boolean
@@ -214,7 +209,6 @@ jobs:
           APP_ID: ${{ vars.SELF_HEALING_APP_ID }}
           INSTALLATION_ID: ${{ vars.SELF_HEALING_INSTALLATION_ID }}
           APP_PRIVATE_KEY: ${{ secrets.SELF_HEALING_APP_PRIVATE_KEY }}
-          ROTATE: ${{ inputs.rotate_webhook_credentials }}
         run: |
           set -euo pipefail
           umask 077
@@ -242,21 +236,6 @@ jobs:
           app_token="$(kubectl -n togglemaster get secret webhook --ignore-not-found -o name)"
           peer_secret="$(kubectl -n observability get secret webhook --ignore-not-found -o name)"
           tls_secret="$(kubectl -n togglemaster get secret auth-self-healing-tls --ignore-not-found -o name)"
-          if [[ "$ROTATE" == "true" ]]; then
-            replicas="$(kubectl -n togglemaster get deployment webhook --ignore-not-found -o jsonpath='{.spec.replicas}')"
-            if [[ -n "$replicas" && "$replicas" != "0" ]]; then
-              echo "Scale webhook to zero through GitOps before rotating its credentials." >&2
-              exit 1
-            fi
-            pods="$(kubectl -n togglemaster get pods -l app=webhook -o name)"
-            if [[ -n "$pods" ]]; then
-              echo "Wait until all webhook pods have terminated before rotating its credentials." >&2
-              exit 1
-            fi
-            app_token=""
-            peer_secret=""
-            tls_secret=""
-          fi
           if [[ -n "$app_token" ]]; then
             kubectl -n togglemaster get secret webhook -o jsonpath='{.data.token}' | base64 --decode > "$work_dir/token"
           fi
@@ -268,7 +247,7 @@ jobs:
               exit 1
             fi
             if [[ -n "$app_token" ]] && ! cmp -s "$work_dir/token" "$work_dir/peer-token"; then
-              echo "Webhook tokens differ between namespaces; disable the receiver and rotate the credentials." >&2
+              echo "Webhook tokens differ between namespaces; disable the receiver and resolve the inconsistent secrets." >&2
               exit 1
             fi
             if [[ -z "$app_token" ]]; then
@@ -287,11 +266,11 @@ jobs:
             kubectl -n togglemaster get secret auth-self-healing-tls -o jsonpath='{.data.tls\.crt}' | base64 --decode > "$work_dir/tls.crt"
             kubectl -n togglemaster get secret auth-self-healing-tls -o jsonpath='{.data.tls\.key}' | base64 --decode > "$work_dir/tls.key"
             if [[ -n "$peer_secret" ]] && ! cmp -s "$work_dir/tls.crt" "$work_dir/peer.crt"; then
-              echo "Webhook certificates differ between namespaces; disable the receiver and rotate the credentials." >&2
+              echo "Webhook certificates differ between namespaces; disable the receiver and resolve the inconsistent secrets." >&2
               exit 1
             fi
           elif [[ -n "$peer_secret" ]]; then
-            echo "The webhook TLS private key is missing; disable the receiver and rotate the credentials." >&2
+            echo "The webhook TLS private key is missing; disable the receiver and resolve the inconsistent secrets." >&2
             exit 1
           else
             openssl req -x509 -newkey rsa:3072 -nodes -days 90 \
@@ -303,7 +282,7 @@ jobs:
               -addext 'extendedKeyUsage=serverAuth' >/dev/null 2>&1
           fi
           if ! openssl x509 -in "$work_dir/tls.crt" -checkend 604800 -noout >/dev/null; then
-            echo "Webhook TLS certificate is invalid or expires within seven days; rotate the credentials." >&2
+            echo "Webhook TLS certificate is invalid or expires within seven days; disable the receiver and replace the credentials." >&2
             exit 1
           fi
           openssl verify -purpose sslserver -verify_hostname webhook.togglemaster.svc \
