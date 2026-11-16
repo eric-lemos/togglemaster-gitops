@@ -120,7 +120,7 @@ jobs:
           git push origin HEAD:main
 
   deploy:
-    name: K8s Apply
+    name: Apply K8s Manifests
     runs-on: ubuntu-latest
     needs: image
     if: inputs.kubernetes_apply
