@@ -1,12 +1,12 @@
 # ToggleMaster GitOps
 
-Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow GitOps:
+Manifests Kubernetes gerenciados pelo Argo CD. O Terraform instala o Ingress NGINX, o Metrics Server e o Argo CD no cluster. O workflow Terraform gerencia esses charts Helm em um state separado, depois de criar o EKS. Esta aplicação é registrada no Argo CD pelo workflow **Kubernetes Ops**:
 
 ```bash
-kubectl apply -f argocd/application.yaml
+kubectl apply -f k8s/core/argocd.yml
 ```
 
-Depois disso, o Argo CD acompanha a branch `main` deste repositório, aplica a raiz `kustomization.yaml` e mantém o namespace `togglemaster` sincronizado.
+Depois disso, o Argo CD acompanha a branch `main` deste repositório, aplica `k8s/kustomization.yaml` e mantém o namespace `togglemaster` sincronizado.
 
 ## Fluxo de imagens
 
@@ -17,11 +17,11 @@ O repositório de apps precisa destas GitHub Variables:
 ```text
 GITOPS_REPOSITORY=eric-lemos/togglemaster-f3-gitops
 GITOPS_BRANCH=main
-GITOPS_AUTH_MANIFEST_PATH=apps/auth-service.yaml
-GITOPS_EVALUATION_MANIFEST_PATH=apps/evaluation-service.yaml
-GITOPS_ANALYTICS_MANIFEST_PATH=apps/analytics-service.yaml
-GITOPS_FLAG_MANIFEST_PATH=apps/flag-service.yaml
-GITOPS_TARGETING_MANIFEST_PATH=apps/targeting-service.yaml
+GITOPS_AUTH_MANIFEST_PATH=k8s/apps/auth.yml
+GITOPS_EVALUATION_MANIFEST_PATH=k8s/apps/evaluation.yml
+GITOPS_ANALYTICS_MANIFEST_PATH=k8s/apps/analytics.yml
+GITOPS_FLAG_MANIFEST_PATH=k8s/apps/flag.yml
+GITOPS_TARGETING_MANIFEST_PATH=k8s/apps/targeting.yml
 ```
 
 Configure também o secret `GITOPS_TOKEN` com permissão de escrita no repositório GitOps. As pipelines usam esse token somente no push para `main`.
@@ -37,7 +37,7 @@ O workflow `.github/workflows/gitops.yml` pode ser executado em **Actions > GitO
 - `Kubernetes Apply`: prepara os secrets de runtime e aplica os manifests Kubernetes e a Application do Argo CD.
 - `Run Postgres Schema Job`: remove e recria `postgres-schema-init`, aguarda sua conclusão e exibe os logs.
 
-O workflow GitOps não instala charts nem executa Helm. Para criar ou atualizar os charts, execute o workflow Terraform em **Actions > Terraform CI > Run workflow** com `apply=true`. Ele aplica primeiro a infraestrutura e depois os charts em um state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
+O workflow Kubernetes Ops não instala charts nem executa Helm. Para criar ou atualizar os charts, execute o workflow Terraform em **Actions > Terraform CI > Run workflow** com `apply=true`. Ele aplica primeiro a infraestrutura e depois os charts em um state separado (`helm/terraform.tfstate`): Ingress NGINX com Service `LoadBalancer`, Metrics Server com `--kubelet-insecure-tls` e Argo CD com Service `LoadBalancer`. O `upgrade_install` permite ao Terraform assumir releases Helm que já existiam no cluster.
 
 ## Acesso à interface do Argo CD
 
@@ -69,9 +69,9 @@ Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no nave
 ### Execução do validador
 
 ```bash
-pip install -r scripts/requirements.txt
-python3 scripts/validate_apps.py                       # descobre o ingress via kubectl
-python3 scripts/validate_apps.py --base-url http://<ENDERECO-DO-INGRESS>
+pip install -r scripts/uat/requirements.txt
+python3 scripts/uat/user_testing.py                       # descobre o ingress via kubectl
+python3 scripts/uat/user_testing.py --base-url http://<ENDERECO-DO-INGRESS>
 ```
 
 Sem `--base-url` (ou a variável `TOGGLEMASTER_BASE_URL`), o script lê
@@ -87,7 +87,7 @@ repositório. A API key criada pelo teste é mascarada no log do Actions.
 
 ### Atualização da chave durante o teste local
 
-O script `scripts/validate_apps.py` executa `update_key_on_k8s` depois de
+O script `scripts/uat/user_testing.py` executa `update_key_on_k8s` depois de
 `update_rule`, antes das avaliações. Ele usa a API key criada pelo teste para
 criar ou atualizar `togglemaster-runtime/SERVICE_API_KEY` no namespace
 `togglemaster`, reinicia o Deployment `evaluation-service` e aguarda o rollout
@@ -137,7 +137,7 @@ no cabeçalho de autorização. O endpoint administrativo
 Para fazer requisições com `requests`, instale a dependência:
 
 ```bash
-python -m pip install -r scripts/requirements.txt
+python -m pip install -r scripts/uat/requirements.txt
 ```
 
 Exemplo de uso:
@@ -246,12 +246,12 @@ receptor.
 1. Publique as alterações dos repositórios Terraform e GitOps. Aplique o
    Terraform para criar o repositório ECR `togglemaster/webhook`.
    O valor `self_healing_webhook_enabled` do Helm deve continuar `false`.
-   Execute o workflow GitOps com **K8s Apply** para atualizar também a
+   Execute o workflow **Kubernetes Ops** com **Kubernetes Apply** para atualizar também a
    Application do Argo CD, que preserva a annotation de restart do receptor.
-2. Execute manualmente o workflow **Self-healing**, escolhendo `build-image`.
-   Essa opção constrói e publica a imagem que executa o receptor Python no
-   Kubernetes e atualiza `image` em `webhook/resources.yaml` com a revisão Git
-   como tag. O commit é enviado para `main` e o Argo CD sincroniza o manifesto,
+2. O **Kubernetes Apply** executa antes o job **Image Build**, que constrói e
+   publica a imagem do receptor Python (`scripts/webhook`) e atualiza `image`
+   em `k8s/core/webhook.yml` com o hash de `scripts/webhook` como tag (sem
+   alterações no código, nada é reconstruído). O commit é enviado para `main` e o Argo CD sincroniza o manifesto,
    respeitando o número de réplicas configurado. Se o webhook já tiver
    réplicas ativas, uma nova imagem inicia o rollout do receptor. A operação
    não reinicia o `auth-service`.
@@ -265,7 +265,7 @@ receptor.
    secret `SELF_HEALING_APP_PRIVATE_KEY` com o conteúdo integral do arquivo
    `.pem`, incluindo as linhas BEGIN e END. Não adicione a chave ao Git nem a
    compartilhe em mensagens.
-   Execute o workflow **Self-healing** com `operation=configure-secrets` e
+   Execute **Kubernetes Ops** com **Kubernetes Apply** e
    `rotate_webhook_credentials=false`. Ele cria ou atualiza os Secrets nas
    duas namespaces, gera o token e o certificado TLS de 90 dias quando
    necessário e reinicia apenas o receptor, caso seu Deployment já exista.
@@ -287,8 +287,8 @@ Para suspender novas ações, altere `SELF_HEALING_ENABLED` para `false` no
 GitHub; execuções já iniciadas não são canceladas. Desative também a rota Helm
 e volte o receptor para zero réplicas nos manifests. A Action pode ser
 acionada manualmente, mas sempre aplica as mesmas verificações.
-O webhook seleciona a operação `restart`, que executa
-`python3 webhook/self_healing.py --restart` no runner; sem essa flag o
+O webhook dispara o workflow **Kubernetes Self Healing**, que executa
+`python3 scripts/webhook/self_healing.py --restart` no runner; sem essa flag o
 mesmo arquivo inicia o servidor HTTPS do receptor.
 
 ### Renovação do token e do certificado
@@ -296,7 +296,7 @@ mesmo arquivo inicia o servidor HTTPS do receptor.
 O workflow mostra a data de expiração do certificado sem expor credenciais.
 Para renová-lo ou trocar o token, desative a rota no Helm, publique
 `replicas: 0` para o receptor e aguarde a sincronização do Argo CD. Depois,
-execute **Self-healing** com `operation=configure-secrets` e
+execute **Kubernetes Ops** com **Kubernetes Apply** e
 `rotate_webhook_credentials=true`. A rotação exige zero réplicas e que todos
 os pods do receptor tenham terminado, e atualiza os Secrets dos dois lados;
 reative o receptor e a rota após a conclusão. Existe

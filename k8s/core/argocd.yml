@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://github.com/eric-lemos/togglemaster-f3-gitops.git
     targetRevision: main
-    path: .
+    path: k8s
   destination:
     server: https://kubernetes.default.svc
     namespace: togglemaster

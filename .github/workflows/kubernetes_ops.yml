@@ -1,70 +1,91 @@
-name: GitOps SelfHealing
+name: Kubernetes Ops
 
 on:
   workflow_dispatch:
     inputs:
-      operation:
-        description: "Operation"
-        type: choice
-        required: true
-        default: build-image
-        options:
-          - build-image
-          - configure-secrets
-          - restart
-      rotate_webhook_credentials:
-        description: "Rotate webhook token and TLS certificate (requires zero webhook replicas)"
-        type: boolean
+      kubernetes_apply:
+        description: "Kubernetes Apply (Image Build, K8s Apply and Configure Secrets)"
         required: true
         default: false
+        type: boolean
+      rotate_webhook_credentials:
+        description: "Kubernetes Apply: rotate webhook token and TLS certificate (requires zero webhook replicas)"
+        required: true
+        default: false
+        type: boolean
+      run_postgres_schema_job:
+        description: "Postgres Schema"
+        required: true
+        default: false
+        type: boolean
+      validate_apps:
+        description: "Validate Togglemaster"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: gitops-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+
 jobs:
-  build-image:
-    if: github.ref == 'refs/heads/main' && inputs.operation == 'build-image'
+  image:
+    name: Image Build
     runs-on: ubuntu-latest
+    if: inputs.kubernetes_apply
     permissions:
       contents: write
-    concurrency:
-      group: webhook-image
-      cancel-in-progress: false
     steps:
-      - name: Checkout
+      - name: Require main branch
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Kubernetes Apply must run from main because it commits the webhook image." >&2
+            exit 1
+          fi
+
+      - name: Checkout GitOps repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Build image
-        run: docker build -t webhook:"$GITHUB_SHA" webhook
+
+      - name: Compute image tag
+        run: echo "TAG=$(git rev-parse HEAD:scripts/webhook)" >> "$GITHUB_ENV"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
       - name: Log in to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Publish image
+
+      - name: Build and publish image
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
-          image="$REGISTRY/togglemaster/webhook:$GITHUB_SHA"
-          docker tag webhook:"$GITHUB_SHA" "$image"
+          image="$REGISTRY/togglemaster/webhook:$TAG"
           tags="$(aws ecr list-images --repository-name togglemaster/webhook --filter tagStatus=TAGGED --query 'imageIds[].imageTag' --output json --region "$AWS_REGION")"
-          if printf '%s' "$tags" | jq -e --arg tag "$GITHUB_SHA" 'index($tag) != null' >/dev/null; then
-            echo "Image tag already exists; skipping push."
+          if printf '%s' "$tags" | jq -e --arg tag "$TAG" 'index($tag) != null' >/dev/null; then
+            echo "Image tag already exists; skipping build."
           else
+            docker build -t "$image" scripts/webhook
             docker push "$image"
           fi
-          echo "Published image: $image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
       - name: Update webhook manifest
-        env:
-          IMAGE: ${{ steps.ecr.outputs.registry }}/togglemaster/webhook:${{ github.sha }}
         run: |
           set -euo pipefail
           git fetch origin main
@@ -72,7 +93,7 @@ jobs:
             echo "The build revision is no longer an ancestor of main; rerun the workflow." >&2
             exit 1
           fi
-          if ! git diff --quiet "$GITHUB_SHA" origin/main -- webhook; then
+          if ! git diff --quiet "$GITHUB_SHA" origin/main -- scripts/webhook; then
             echo "Webhook files changed during the build; rerun the workflow on the latest main." >&2
             exit 1
           fi
@@ -82,7 +103,7 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path("webhook/resources.yaml")
+          path = Path("k8s/core/webhook.yml")
           content = path.read_text(encoding="utf-8")
           updated, count = re.subn(
               r"(?m)^([ \t]*image:[ \t]*)\S+([ \t]*)$",
@@ -90,39 +111,104 @@ jobs:
               content,
           )
           if count != 1:
-              raise SystemExit("Expected exactly one image field in webhook/resources.yaml.")
+              raise SystemExit("Expected exactly one image field in k8s/core/webhook.yml.")
           path.write_text(updated, encoding="utf-8")
           PY
-          git add webhook/resources.yaml
+          git add k8s/core/webhook.yml
           if git diff --cached --quiet; then
             echo "Webhook manifest already references this image."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update webhook image" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git commit -m "chore: update webhook image"
           git push origin HEAD:main
 
-  configure-secrets:
-    if: github.ref == 'refs/heads/main' && inputs.operation == 'configure-secrets'
+  deploy:
+    name: K8s Apply
     runs-on: ubuntu-latest
+    needs: image
+    if: inputs.kubernetes_apply
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+
+      - name: Prepare namespace and runtime secrets
+        env:
+          AUTH_DATABASE_URL: ${{ secrets.AUTH_DATABASE_URL }}
+          FLAG_DATABASE_URL: ${{ secrets.FLAG_DATABASE_URL }}
+          TARGETING_DATABASE_URL: ${{ secrets.TARGETING_DATABASE_URL }}
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          AWS_SQS_URL: ${{ vars.AWS_SQS_URL }}
+          AWS_DYNAMODB_TABLE: ${{ vars.AWS_DYNAMODB_TABLE }}
+        run: |
+          required_values=(
+            AUTH_DATABASE_URL
+            FLAG_DATABASE_URL
+            TARGETING_DATABASE_URL
+            MASTER_KEY
+            REDIS_URL
+            AWS_SQS_URL
+            AWS_DYNAMODB_TABLE
+          )
+          for variable_name in "${required_values[@]}"; do
+            if [[ -z "${!variable_name}" ]]; then
+              echo "Required configuration is missing: $variable_name" >&2
+              exit 1
+            fi
+          done
+
+          kubectl apply -f k8s/core/namespace.yml
+          kubectl create secret generic togglemaster-secrets \
+            --namespace togglemaster \
+            --from-literal=AUTH_DATABASE_URL="$AUTH_DATABASE_URL" \
+            --from-literal=FLAG_DATABASE_URL="$FLAG_DATABASE_URL" \
+            --from-literal=TARGETING_DATABASE_URL="$TARGETING_DATABASE_URL" \
+            --from-literal=MASTER_KEY="$MASTER_KEY" \
+            --from-literal=REDIS_URL="$REDIS_URL" \
+            --from-literal=AWS_REGION="$AWS_REGION" \
+            --from-literal=AWS_SQS_URL="$AWS_SQS_URL" \
+            --from-literal=AWS_DYNAMODB_TABLE="$AWS_DYNAMODB_TABLE" \
+            --dry-run=client \
+            --output=yaml | kubectl apply -f -
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -k k8s
+          kubectl apply -f k8s/core/argocd.yml
+
+  secrets:
+    name: Configure Secrets
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: inputs.kubernetes_apply
     timeout-minutes: 10
-    concurrency:
-      group: webhook-secrets
-      cancel-in-progress: false
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
       - name: Configure kubectl
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+
       - name: Provision webhook secrets
         env:
           APP_ID: ${{ vars.SELF_HEALING_APP_ID }}
@@ -143,6 +229,15 @@ jobs:
           unset APP_PRIVATE_KEY
           openssl pkey -in "$work_dir/app.pem" -check -noout >/dev/null
           openssl pkey -in "$work_dir/app.pem" -pubout | openssl rsa -pubin -noout >/dev/null
+
+          secret_versions() {
+            for secret in "togglemaster auth-self-healing-app" "togglemaster webhook" "togglemaster auth-self-healing-tls" "observability webhook"; do
+              set -- $secret
+              kubectl -n "$1" get secret "$2" --ignore-not-found -o jsonpath='{.metadata.resourceVersion}'
+              echo
+            done
+          }
+          versions_before="$(secret_versions)"
 
           app_token="$(kubectl -n togglemaster get secret webhook --ignore-not-found -o name)"
           peer_secret="$(kubectl -n observability get secret webhook --ignore-not-found -o name)"
@@ -229,35 +324,131 @@ jobs:
           kubectl -n observability create secret generic webhook \
             --from-file="token=$work_dir/token" --from-file="ca.crt=$work_dir/tls.crt" \
             --dry-run=client -o yaml | kubectl apply -f -
-          deployment="$(kubectl -n togglemaster get deployment webhook --ignore-not-found -o name)"
-          if [[ -n "$deployment" ]]; then
-            kubectl -n togglemaster rollout restart deployment/webhook
-            kubectl -n togglemaster rollout status deployment/webhook --timeout=300s
+          if [[ "$versions_before" != "$(secret_versions)" ]]; then
+            deployment="$(kubectl -n togglemaster get deployment webhook --ignore-not-found -o name)"
+            if [[ -n "$deployment" ]]; then
+              kubectl -n togglemaster rollout restart deployment/webhook
+              kubectl -n togglemaster rollout status deployment/webhook --timeout=300s
+            fi
           fi
-          echo "Webhook secrets updated. TLS certificate expiry:"
+          echo "Webhook secrets ready. TLS certificate expiry:"
           openssl x509 -in "$work_dir/tls.crt" -noout -enddate
 
-  restart:
-    if: github.ref == 'refs/heads/main' && inputs.operation == 'restart' && vars.SELF_HEALING_ENABLED == 'true'
+  config:
+    name: Postgres Schema
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    concurrency:
-      group: auth-self-healing
-      cancel-in-progress: false
+    if: inputs.run_postgres_schema_job
     steps:
-      - name: Checkout
+      - name: Checkout GitOps repository
         uses: actions/checkout@v5
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
       - name: Configure kubectl
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
-      - name: Check alert and restart if allowed
-        run: python3 webhook/self_healing.py --restart
+
+      - name: Prepare namespace and runtime secrets
+        env:
+          AUTH_DATABASE_URL: ${{ secrets.AUTH_DATABASE_URL }}
+          FLAG_DATABASE_URL: ${{ secrets.FLAG_DATABASE_URL }}
+          TARGETING_DATABASE_URL: ${{ secrets.TARGETING_DATABASE_URL }}
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          AWS_SQS_URL: ${{ vars.AWS_SQS_URL }}
+          AWS_DYNAMODB_TABLE: ${{ vars.AWS_DYNAMODB_TABLE }}
+        run: |
+          required_values=(
+            AUTH_DATABASE_URL
+            FLAG_DATABASE_URL
+            TARGETING_DATABASE_URL
+            MASTER_KEY
+            REDIS_URL
+            AWS_SQS_URL
+            AWS_DYNAMODB_TABLE
+          )
+          for variable_name in "${required_values[@]}"; do
+            if [[ -z "${!variable_name}" ]]; then
+              echo "Required configuration is missing: $variable_name" >&2
+              exit 1
+            fi
+          done
+
+          kubectl apply -f k8s/core/namespace.yml
+          kubectl create secret generic togglemaster-secrets \
+            --namespace togglemaster \
+            --from-literal=AUTH_DATABASE_URL="$AUTH_DATABASE_URL" \
+            --from-literal=FLAG_DATABASE_URL="$FLAG_DATABASE_URL" \
+            --from-literal=TARGETING_DATABASE_URL="$TARGETING_DATABASE_URL" \
+            --from-literal=MASTER_KEY="$MASTER_KEY" \
+            --from-literal=REDIS_URL="$REDIS_URL" \
+            --from-literal=AWS_REGION="$AWS_REGION" \
+            --from-literal=AWS_SQS_URL="$AWS_SQS_URL" \
+            --from-literal=AWS_DYNAMODB_TABLE="$AWS_DYNAMODB_TABLE" \
+            --dry-run=client \
+            --output=yaml | kubectl apply -f -
+
+      - name: Run Postgres Schema Job
+        run: |
+          kubectl delete job postgres-schema-init \
+            --namespace togglemaster \
+            --ignore-not-found
+          kubectl apply -f k8s/jobs/postgres.yml
+          kubectl wait \
+            --namespace togglemaster \
+            --for=condition=complete \
+            --timeout=10m \
+            job/postgres-schema-init
+          kubectl logs \
+            --namespace togglemaster \
+            job/postgres-schema-init
+
+  validate:
+    name: Validate Togglemaster
+    runs-on: ubuntu-latest
+    needs: [secrets, config]
+    if: ${{ !cancelled() && inputs.validate_apps && !contains(needs.*.result, 'failure') }}
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install validator dependencies
+        run: python -m pip install -r scripts/uat/requirements.txt
+
+      - name: Wait for application rollouts
+        run: |
+          deployments=$(kubectl get deployments --namespace togglemaster --output name)
+          if [[ -z "$deployments" ]]; then
+            echo "No deployments found in namespace togglemaster" >&2
+            exit 1
+          fi
+          for deployment in $deployments; do
+            kubectl rollout status "$deployment" --namespace togglemaster --timeout=300s
+          done
+
+      - name: Run end-to-end validation
+        env:
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/uat/user_testing.py

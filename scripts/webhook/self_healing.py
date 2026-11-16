@@ -23,7 +23,7 @@ PROMETHEUS_PROXY = (
 )
 ALERT_NAME = "ToggleMasterAuthHighErrorRate"
 GITHUB_API = "https://api.github.com"
-WORKFLOW_PATH = "/repos/eric-lemos/togglemaster-gitops/actions/workflows/self-healing.yml/dispatches"
+WORKFLOW_PATH = "/repos/eric-lemos/togglemaster-gitops/actions/workflows/kubernetes_sh.yml/dispatches"
 MAX_BODY = 64 * 1024
 
 def kubectl(*args):
@@ -159,7 +159,7 @@ def dispatch(app_id, installation_id, key):
     token = token_response.get("token")
     if not isinstance(token, str) or not token:
         raise ValueError("Invalid GitHub installation token response")
-    github_post(WORKFLOW_PATH, token, {"ref": "main", "inputs": {"operation": "restart"}}, {200, 204})
+    github_post(WORKFLOW_PATH, token, {"ref": "main"}, {200, 204})
 
 def valid_notification(payload):
     if not isinstance(payload, dict) or payload.get("status") != "firing":
