@@ -48,7 +48,7 @@ if [[ "$route_enabled" == true ]]; then
     echo "The observability/self-healing secret must contain token and ca.crt before enabling the alert route." >&2
     exit 1
   fi
-  monitoring_values+=(-f helm/values/monitoring-self-healing.yaml)
+  monitoring_values+=(-f helm/values/alertmanager.yaml)
 fi
 {
   printf 'additionalPrometheusRulesMap:\n  togglemaster-auth:\n'
@@ -64,7 +64,7 @@ helm repo add argo https://argoproj.github.io/argo-helm
 helm repo update
 
 common=(--install --atomic --cleanup-on-fail --wait --timeout 10m --create-namespace)
-helm upgrade ingress-nginx ingress-nginx/ingress-nginx --version 4.15.1 --namespace ingress-nginx "${common[@]}" -f helm/values/ingress-nginx.yaml
+helm upgrade ingress-nginx ingress-nginx/ingress-nginx --version 4.15.1 --namespace ingress-nginx "${common[@]}" -f helm/values/ingress.yaml
 helm upgrade metrics-server metrics-server/metrics-server --version 3.14.0 --namespace kube-system "${common[@]}" -f helm/values/metrics-server.yaml
 helm upgrade argocd argo/argo-cd --version 10.6.0 --namespace argocd "${common[@]}" -f helm/values/argocd.yaml
 helm upgrade monitoring prometheus-community/kube-prometheus-stack --version 92.17.0 --namespace observability "${common[@]}" \
