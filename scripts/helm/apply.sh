@@ -9,6 +9,10 @@ if [[ -z "${PAGERDUTY_INTEGRATION_KEY:-}" || "$PAGERDUTY_INTEGRATION_KEY" =~ [[:
   echo "PAGERDUTY_INTEGRATION_KEY must be a non-empty Events API v2 integration key without whitespace." >&2
   exit 1
 fi
+if [[ -z "${DATADOG_API_KEY:-}" || "$DATADOG_API_KEY" =~ [[:space:]] ]]; then
+  echo "DATADOG_API_KEY must be a non-empty Datadog API key without whitespace." >&2
+  exit 1
+fi
 route_enabled="${SELF_HEALING_ENABLED:-false}"
 if [[ "$route_enabled" != true && "$route_enabled" != false ]]; then
   echo "SELF_HEALING_ENABLED must be true or false." >&2
@@ -18,15 +22,20 @@ command -v htpasswd >/dev/null || { echo "htpasswd is required to create monitor
 
 umask 077
 work_dir="$(mktemp -d)"
-trap 'rm -f "$work_dir"/url "$work_dir"/routing-key "$work_dir"/password "$work_dir"/username "$work_dir"/auth "$work_dir"/alert-rules.yaml; rmdir "$work_dir"' EXIT
+trap 'rm -f "$work_dir"/url "$work_dir"/routing-key "$work_dir"/datadog-api-key "$work_dir"/password "$work_dir"/username "$work_dir"/auth "$work_dir"/alert-rules.yaml; rmdir "$work_dir"' EXIT
 
 kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
 printf '%s/slack' "${DISCORD_WEBHOOK_URL%/}" > "$work_dir/url"
 printf '%s' "$PAGERDUTY_INTEGRATION_KEY" > "$work_dir/routing-key"
+printf '%s' "$DATADOG_API_KEY" > "$work_dir/datadog-api-key"
+unset DATADOG_API_KEY
+datadog_key_checksum="$(sha256sum "$work_dir/datadog-api-key" | cut -d ' ' -f 1)"
 kubectl -n observability create secret generic discord-webhook \
   --from-file="url=$work_dir/url" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n observability create secret generic pagerduty-integration \
   --from-file="routing-key=$work_dir/routing-key" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n observability create secret generic datadog \
+  --from-file="api-key=$work_dir/datadog-api-key" --dry-run=client -o yaml | kubectl apply -f -
 
 if [[ -z "$(kubectl -n observability get secret monitoring-ui-basic-auth --ignore-not-found -o name)" ]]; then
   openssl rand -hex 24 | tr -d '\n' > "$work_dir/password"
@@ -73,4 +82,5 @@ helm upgrade monitoring prometheus-community/kube-prometheus-stack --version 92.
   --set-file grafana.dashboards.togglemaster.otel-collector.json=helm/dashboards/otel-collector.json
 helm upgrade loki grafana/loki --version 7.5.0 --namespace observability "${common[@]}" -f helm/values/loki.yaml
 helm upgrade otel-agent open-telemetry/opentelemetry-collector --version 0.178.2 --namespace observability "${common[@]}" -f helm/values/otel-agent.yaml
-helm upgrade otel-gateway open-telemetry/opentelemetry-collector --version 0.178.2 --namespace observability "${common[@]}" -f helm/values/otel-gateway.yaml
+helm upgrade otel-gateway open-telemetry/opentelemetry-collector --version 0.178.2 --namespace observability "${common[@]}" \
+  -f helm/values/otel-gateway.yaml --set-string "podAnnotations.datadog-key-checksum=$datadog_key_checksum"

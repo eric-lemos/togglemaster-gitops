@@ -57,7 +57,8 @@ desinstala os sete releases conhecidos antes de destruir o EKS. O state Helm
 antigo não é removido automaticamente e não deve mais ser aplicado.
 
 Configure no GitOps os secrets `DISCORD_WEBHOOK_URL` (URL original, sem
-`/slack`) e `PAGERDUTY_INTEGRATION_KEY` (Events API v2), além das credenciais
+`/slack`), `PAGERDUTY_INTEGRATION_KEY` (Events API v2) e `DATADOG_API_KEY`,
+além das credenciais
 AWS e da variável `EKS_CLUSTER_NAME`. O job cria os Secrets Kubernetes de
 notificação e, se ainda não existir, `monitoring-ui-basic-auth`, com senha
 aleatória e hash bcrypt. A senha permanece no Secret Kubernetes, não no state
@@ -205,9 +206,13 @@ FLAG_DATABASE_URL
 TARGETING_DATABASE_URL
 MASTER_KEY
 REDIS_URL
+DATADOG_API_KEY
 ```
 
-As credenciais AWS devem estar ativas no momento da execução. As demais Secrets são lidas pelo workflow e transformadas em um Secret Kubernetes chamado `togglemaster-secrets`; não é necessário codificá-las manualmente em Base64.
+As credenciais AWS devem estar ativas no momento da execução. Os secrets das
+aplicações são transformados em `togglemaster-secrets`; a chave Datadog é
+armazenada separadamente em `observability/datadog`. Não é necessário
+codificá-los manualmente em Base64.
 
 Exemplos de valores:
 
@@ -227,10 +232,23 @@ Os cinco serviços enviam métricas por OTLP/gRPC para `otel-gateway.observabili
 (`OTEL_EXPORTER_OTLP_ENDPOINT`), que as expõe ao Prometheus. O nome do serviço
 vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
 
-- Traces e logs ficam desligados nos manifests (`OTEL_TRACES_EXPORTER=none` e
-  `OTEL_LOGS_EXPORTER=none`). Os logs já chegam ao Loki pelo agent.
-- Para ativar traces depois do APM, altere `OTEL_TRACES_EXPORTER` e habilite o
-  pipeline de traces no `otel-gateway` (repositório GitOps).
+- Os traces são enviados ao Datadog no site `us5.datadoghq.com`. O gateway
+  também envia métricas derivadas de spans para as funcionalidades de APM.
+  Isso pode gerar custos no Datadog, conforme o plano e o volume recebido.
+- Antes do envio, o gateway remove atributos, eventos e mensagens de erro dos
+  spans e substitui seus nomes por categorias genéricas. Apenas os nomes
+  conhecidos dos serviços são preservados; outros são identificados como
+  `unknown`. A configuração prioriza privacidade em vez de detalhes de rota.
+- Logs continuam desligados nos SDKs (`OTEL_LOGS_EXPORTER=none`) e chegam ao
+  Loki pelo agent; não são enviados ao Datadog.
+- O workflow **K8s Ops → Apply** cria `observability/datadog` a partir do
+  secret `DATADOG_API_KEY` e atualiza o gateway antes de aplicar os manifests.
+  Execute o Apply novamente após trocar a chave. Não versione nem compartilhe
+  o valor da chave.
+- Após publicar as alterações e executar o Apply, execute **Validate
+  Togglemaster** para gerar tráfego e verifique os traces e o Service Map no
+  Datadog US5. A sincronização automática do Argo CD pode habilitar os SDKs
+  antes do Apply; a exportação depende do gateway atualizado.
 - O evaluation-service grava o contexto de trace nos atributos das mensagens SQS
   e o analytics-service o lê, para o fluxo aparecer como um único trace.
 - Os serviços Python usam `opentelemetry-instrument` via `gunicorn.conf.py`; os

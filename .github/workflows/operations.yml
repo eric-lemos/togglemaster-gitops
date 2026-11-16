@@ -63,6 +63,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PAGERDUTY_INTEGRATION_KEY: ${{ secrets.PAGERDUTY_INTEGRATION_KEY }}
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           SELF_HEALING_ENABLED: ${{ vars.SELF_HEALING_ENABLED }}
         run: bash scripts/helm/apply.sh
 

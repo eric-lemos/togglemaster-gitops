@@ -6,6 +6,12 @@ image:
   tag: "0.163.2"
 command:
   name: otelcol-contrib
+extraEnvs:
+  - name: DD_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: datadog
+        key: api-key
 presets:
   kubernetesAttributes:
     enabled: true
@@ -42,6 +48,24 @@ config:
       spike_limit_mib: 48
       limit_percentage: null
       spike_limit_percentage: null
+    transform/datadog-privacy:
+      error_mode: propagate
+      trace_statements:
+        - keep_keys(resource.attributes, ["service.name"])
+        - set(resource.attributes["service.name"], "unknown") where resource.attributes["service.name"] != "auth-service" and resource.attributes["service.name"] != "evaluation-service" and resource.attributes["service.name"] != "flag-service" and resource.attributes["service.name"] != "targeting-service" and resource.attributes["service.name"] != "analytics-service"
+        - set(scope.name, "opentelemetry")
+        - set(scope.version, "")
+        - keep_keys(scope.attributes, [])
+        - set(span.name, "server") where span.kind == SPAN_KIND_SERVER
+        - set(span.name, "client") where span.kind == SPAN_KIND_CLIENT
+        - set(span.name, "producer") where span.kind == SPAN_KIND_PRODUCER
+        - set(span.name, "consumer") where span.kind == SPAN_KIND_CONSUMER
+        - set(span.name, "internal") where span.kind == SPAN_KIND_INTERNAL or span.kind == SPAN_KIND_UNSPECIFIED
+        - keep_keys(span.attributes, [])
+        - set(span.status.message, "")
+        - set(span.trace_state, "")
+        - set(span.events, nil)
+        - set(span.links, nil)
   exporters:
     debug: null
     prometheus:
@@ -54,9 +78,28 @@ config:
         queue_size: 256
       retry_on_failure:
         enabled: true
+    otlphttp/datadog:
+      endpoint: https://otlp.us5.datadoghq.com
+      headers:
+        dd-api-key: ${env:DD_API_KEY}
+        dd-otel-metric-config: '{"resource_attributes_as_tags": true, "instrumentation_scope_metadata_as_tags": true}'
+  connectors:
+    span_metrics:
+      aggregation_temporality: AGGREGATION_TEMPORALITY_DELTA
+      add_resource_attributes: true
+      histogram:
+        exponential: {}
+        unit: s
   service:
     pipelines:
-      traces: null
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, transform/datadog-privacy, batch]
+        exporters: [otlphttp/datadog, span_metrics]
+      metrics/datadog:
+        receivers: [span_metrics]
+        processors: [batch]
+        exporters: [otlphttp/datadog]
       metrics:
         receivers: [otlp]
         processors: [memory_limiter, batch]
