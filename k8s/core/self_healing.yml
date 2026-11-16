@@ -21,7 +21,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: self-healing
-          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/self_healing:8a7d79cef09282a2ae48074286e8f6cd8db48461
+          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/self_healing:f9e681458e53a9a65668747e902448de6ff619d0
           ports:
             - containerPort: 8443
           env:
