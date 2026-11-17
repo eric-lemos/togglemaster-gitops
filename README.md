@@ -63,11 +63,29 @@ AWS e da variável `EKS_CLUSTER_NAME`. O job cria os Secrets Kubernetes de
 notificação e, se ainda não existir, `monitoring-ui-basic-auth`, com senha
 aleatória e hash bcrypt. A senha permanece no Secret Kubernetes, não no state
 Terraform; não a compartilhe. O acesso HTTP não é seguro para produção.
-Para consultar a senha do basic auth localmente:
+
+## Credenciais das interfaces web
+
+Configure o `kubectl` para o cluster desejado e execute em Bash, a partir da
+raiz do repositório:
 
 ```bash
-kubectl -n observability get secret monitoring-ui-basic-auth -o jsonpath='{.data.password}' | base64 --decode; echo
+bash scripts/get_web_credentials.sh                    # todas
+bash scripts/get_web_credentials.sh grafana
+bash scripts/get_web_credentials.sh prometheus
+bash scripts/get_web_credentials.sh alertmanager
+bash scripts/get_web_credentials.sh argocd
 ```
+
+O script exige `kubectl`, `base64` e permissão para ler os Secrets relevantes
+nos namespaces `observability` e `argocd`. Ele exibe o contexto atual e as
+credenciais diretamente no terminal, sem gravá-las em arquivo. **Não execute
+durante gravações ou compartilhamento de tela**, nem publique a saída.
+Prometheus e Alertmanager compartilham as credenciais de basic auth. A senha do
+Grafana armazenada no Secret pode não refletir uma alteração feita pela
+interface. O Argo CD fornece apenas a senha inicial, que pode ter sido alterada
+ou cujo Secret pode ter sido removido. Credenciais de plataformas externas,
+como Datadog, PagerDuty e Discord, não são consultadas pelo script.
 
 ## Acesso à interface do Argo CD
 
