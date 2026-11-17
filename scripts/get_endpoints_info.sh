@@ -5,23 +5,63 @@ set -Eeuo pipefail
 
 CONTEXT=""
 
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    YELLOW=$'\033[1;33m'
+    BOLD=$'\033[1m'
+    RESET=$'\033[0m'
+else
+    RED=""
+    GREEN=""
+    YELLOW=""
+    BOLD=""
+    RESET=""
+fi
+
 usage() {
-    echo "Uso: bash scripts/get_info.sh [all|apps|grafana|prometheus|alertmanager|argocd]"
-    echo "Sem argumento, consulta todas as ferramentas e aplicações."
+    echo "Usage: bash scripts/get_info.sh [all|apps|grafana|prometheus|alertmanager|argocd]"
+    echo "Without an argument, retrieves all tools and application endpoints."
+}
+
+displayTitle() {
+    local message="$1"
+    printf '\n%s======================================================================================%s\n' "$YELLOW" "$RESET"
+    printf '%s%s%s\n' "$YELLOW" "$message" "$RESET"
+    printf '%s======================================================================================%s\n' "$YELLOW" "$RESET"
+}
+
+displaySubtitle() {
+    local message="$1"
+    printf '\n%s--------------------------------------------------------------------------------------%s\n' "$BOLD" "$RESET"
+    printf '%s>> %s%s\n' "$BOLD" "$message" "$RESET"
+    printf '%s--------------------------------------------------------------------------------------%s\n' "$BOLD" "$RESET"
+}
+
+displaySuccess() {
+    printf '[%sOK%s] %s\n' "$GREEN" "$RESET" "$1"
+}
+
+displayWarning() {
+    printf '[%sWARNING%s] %s\n' "$YELLOW" "$RESET" "$1"
+}
+
+displayError() {
+    printf '[%sERROR%s] %s\n' "$RED" "$RESET" "$1" >&2
 }
 
 checkPrerequisites() {
     local selection="$1"
     command -v kubectl >/dev/null || {
-        echo "Erro: kubectl não encontrado." >&2
+        displayError "kubectl was not found."
         return 1
     }
     if [[ "$selection" != apps ]] && ! command -v base64 >/dev/null; then
-        echo "Erro: base64 não encontrado." >&2
+        displayError "base64 was not found."
         return 1
     fi
     if ! CONTEXT="$(kubectl config current-context)" || [[ -z "$CONTEXT" ]]; then
-        echo "Erro: não foi possível determinar o contexto atual do kubectl." >&2
+        displayError "Could not determine the current kubectl context."
         return 1
     fi
 }
@@ -31,7 +71,7 @@ readLoadBalancerAddress() {
 
     for field in hostname ip; do
         if ! address="$(kubectl --context "$CONTEXT" -n "$namespace" get "$kind" "$name" -o "jsonpath={.status.loadBalancer.ingress[0].$field}")"; then
-            echo "Erro: não foi possível consultar $kind $namespace/$name." >&2
+            displayError "Could not query $kind $namespace/$name."
             return 1
         fi
         if [[ -n "$address" ]]; then
@@ -42,16 +82,16 @@ readLoadBalancerAddress() {
             return 0
         fi
     done
-    echo "Erro: $kind $namespace/$name ainda não possui endereço de LoadBalancer." >&2
+    displayError "$kind $namespace/$name does not have a LoadBalancer address yet."
     return 1
 }
 
 showEndpoint() {
     local address="$1" path="$2" scheme="${3:-http}"
     if [[ -n "$address" ]]; then
-        printf 'Endpoint: %s://%s%s\n' "$scheme" "$address" "$path"
+        printf '  Endpoint: %s%s://%s%s%s\n' "$BOLD" "$scheme" "$address" "$path" "$RESET"
     else
-        echo "Endpoint: indisponível"
+        displayWarning "Endpoint unavailable; check the LoadBalancer address."
     fi
 }
 
@@ -59,15 +99,15 @@ readSecretField() {
     local namespace="$1" secret="$2" key="$3" encoded value
 
     if ! encoded="$(kubectl --context "$CONTEXT" -n "$namespace" get secret "$secret" -o "jsonpath={.data.$key}")"; then
-        echo "Erro: não foi possível consultar o Secret $namespace/$secret." >&2
+        displayError "Could not read Secret $namespace/$secret."
         return 1
     fi
     if [[ -z "$encoded" ]]; then
-        echo "Erro: campo $key ausente ou vazio no Secret $namespace/$secret." >&2
+        displayError "Field $key is missing or empty in Secret $namespace/$secret."
         return 1
     fi
     if ! value="$(printf '%s' "$encoded" | base64 --decode)" || [[ -z "$value" ]]; then
-        echo "Erro: campo $key inválido ou vazio no Secret $namespace/$secret." >&2
+        displayError "Field $key is invalid or empty in Secret $namespace/$secret."
         return 1
     fi
     printf '%s' "$value"
@@ -75,24 +115,24 @@ readSecretField() {
 
 showGrafana() {
     local address="$1" username password
-    printf '\nGrafana\n'
+    displaySubtitle "Grafana"
     showEndpoint "$address" "/grafana/"
     if ! username="$(readSecretField observability monitoring-grafana admin-user)" ||
         ! password="$(readSecretField observability monitoring-grafana admin-password)"; then
         return 1
     fi
-    printf 'Usuário: %s\nSenha do Secret: %s\n' "$username" "$password"
-    echo "A senha no Secret pode não refletir alterações feitas na interface do Grafana."
+    printf '  Username: %s\n  Password: %s\n' "$username" "$password"
+    displayWarning "The password stored in the Secret may not reflect changes made in Grafana."
 }
 
 showMonitoring() {
     local selection="$1" address="$2" username password
     if [[ "$selection" == all || "$selection" == prometheus ]]; then
-        printf '\nPrometheus\n'
+        displaySubtitle "Prometheus"
         showEndpoint "$address" "/prometheus/"
     fi
     if [[ "$selection" == all || "$selection" == alertmanager ]]; then
-        printf '\nAlertmanager\n'
+        displaySubtitle "Alertmanager"
         showEndpoint "$address" "/alertmanager/"
     fi
     if ! username="$(readSecretField observability monitoring-ui-basic-auth username)" ||
@@ -100,38 +140,38 @@ showMonitoring() {
         return 1
     fi
     if [[ "$selection" == all ]]; then
-        echo "Credenciais compartilhadas do Prometheus e Alertmanager:"
+        printf '  Shared Prometheus and Alertmanager credentials:\n'
     fi
-    printf 'Usuário: %s\nSenha: %s\n' "$username" "$password"
+    printf '  Username: %s\n  Password: %s\n' "$username" "$password"
 }
 
 showApps() {
     local address="$1" app
-    printf '\nAplicações ToggleMaster (URLs base)\n'
+    displaySubtitle "ToggleMaster application health endpoints"
     if [[ -z "$address" ]]; then
-        echo "Endpoints: indisponíveis"
+        displayWarning "Endpoints unavailable; check the Ingress address."
         return
     fi
+    printf '  %-24s %s\n' "APPLICATION" "ENDPOINT"
     for app in auth-service flag-service targeting-service evaluation-service analytics-service; do
-        printf '%s: http://%s/%s\n' "$app" "$address" "$app"
+        printf '  %-24s http://%s/%s/health\n' "$app" "$address" "$app"
     done
-    echo "Para verificar a saúde, acrescente /health à URL base."
 }
 
 showArgoCD() {
     local address="" password failed=0
-    printf '\nArgo CD\n'
+    displaySubtitle "Argo CD"
     if ! address="$(readLoadBalancerAddress argocd service argocd-server)"; then
         failed=1
     fi
     showEndpoint "$address" "/" "https"
-    echo "O certificado padrão do Argo CD pode ser autoassinado."
+    displayWarning "The default Argo CD certificate may be self-signed."
     if ! password="$(readSecretField argocd argocd-initial-admin-secret password)"; then
-        echo "Se o Secret inicial foi removido, consulte a documentação de redefinição do Argo CD." >&2
+        displayError "If the initial Secret was removed, consult the Argo CD password reset documentation."
         return 1
     fi
-    printf 'Usuário inicial: admin\nSenha inicial: %s\n' "$password"
-    echo "A senha inicial pode não ser a senha atual se ela tiver sido alterada."
+    printf '  Initial username: admin\n  Initial password: %s\n' "$password"
+    displayWarning "The initial password may no longer be current if it has been changed."
     return "$failed"
 }
 
@@ -149,9 +189,10 @@ main() {
     esac
 
     checkPrerequisites "$selection"
-    echo "Contexto Kubernetes: $CONTEXT"
+    displayTitle "ToggleMaster — Endpoints and credentials"
+    displaySuccess "Kubernetes context: $CONTEXT"
     if [[ "$selection" != apps ]]; then
-        echo "Atenção: as senhas serão exibidas no terminal. Não grave nem compartilhe a tela."
+        displayWarning "Passwords will be displayed in the terminal. Do not record or share your screen."
     fi
 
     if [[ "$selection" != argocd ]]; then
