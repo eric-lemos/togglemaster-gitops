@@ -64,23 +64,30 @@ notificação e, se ainda não existir, `monitoring-ui-basic-auth`, com senha
 aleatória e hash bcrypt. A senha permanece no Secret Kubernetes, não no state
 Terraform; não a compartilhe. O acesso HTTP não é seguro para produção.
 
-## Credenciais das interfaces web
+## Endpoints e credenciais das interfaces web
 
 Configure o `kubectl` para o cluster desejado e execute em Bash, a partir da
 raiz do repositório:
 
 ```bash
-bash scripts/get_web_credentials.sh                    # todas
-bash scripts/get_web_credentials.sh grafana
-bash scripts/get_web_credentials.sh prometheus
-bash scripts/get_web_credentials.sh alertmanager
-bash scripts/get_web_credentials.sh argocd
+bash scripts/get_info.sh                    # todas e URLs dos apps
+bash scripts/get_info.sh apps               # apenas URLs dos apps
+bash scripts/get_info.sh grafana
+bash scripts/get_info.sh prometheus
+bash scripts/get_info.sh alertmanager
+bash scripts/get_info.sh argocd
 ```
 
 O script exige `kubectl`, `base64` e permissão para ler os Secrets relevantes
-nos namespaces `observability` e `argocd`. Ele exibe o contexto atual e as
+nos namespaces `observability` e `argocd`, além de consultar o Ingress
+`togglemaster/togglemaster-ingress` e o Service `argocd/argocd-server`,
+conforme a opção escolhida. O Ingress deve compartilhar o controlador NGINX
+usado pelas interfaces de observabilidade. Ele exibe o contexto atual e as
 credenciais diretamente no terminal, sem gravá-las em arquivo. **Não execute
 durante gravações ou compartilhamento de tela**, nem publique a saída.
+Com `apps`, o script não consulta nem exibe senhas. Os endereços externos são
+obtidos do status dos LoadBalancers e podem ainda estar indisponíveis; URLs de
+aplicações são bases de API, não necessariamente páginas web.
 Prometheus e Alertmanager compartilham as credenciais de basic auth. A senha do
 Grafana armazenada no Secret pode não refletir uma alteração feita pela
 interface. O Argo CD fornece apenas a senha inicial, que pode ter sido alterada
@@ -110,7 +117,9 @@ Para consultar o endereço externo provisionado para o Argo CD:
 kubectl get service argocd-server -n argocd
 ```
 
-Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no navegador. A configuração atual usa `LoadBalancer` e HTTP, sem TLS.
+Use o valor de `EXTERNAL-IP` (que no EKS normalmente é um hostname AWS) no
+navegador. O Argo CD usa um Service `LoadBalancer`; com a configuração padrão,
+o acesso HTTPS pode apresentar um aviso de certificado autoassinado.
 
 ## Requisições HTTP aos endpoints
 
