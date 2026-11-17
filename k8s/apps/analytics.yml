@@ -17,7 +17,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: analytics-service
-          image: 730335623958.dkr.ecr.us-east-1.amazonaws.com/togglemaster/analytics:51c9a8c22d6aa56dab42ca1e38065b975d16d188
+          image: 834984111830.dkr.ecr.us-east-1.amazonaws.com/togglemaster/analytics:51c9a8c22d6aa56dab42ca1e38065b975d16d188
           imagePullPolicy: Always
           ports:
             - containerPort: 8005
