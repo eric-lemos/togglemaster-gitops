@@ -52,6 +52,7 @@ config:
       error_mode: propagate
       trace_statements:
         - keep_keys(resource.attributes, ["service.name"])
+        - set(resource.attributes["deployment.environment.name"], "default")
         - set(resource.attributes["service.name"], "unknown") where resource.attributes["service.name"] != "auth-service" and resource.attributes["service.name"] != "evaluation-service" and resource.attributes["service.name"] != "flag-service" and resource.attributes["service.name"] != "targeting-service" and resource.attributes["service.name"] != "analytics-service"
         - set(scope.name, "opentelemetry")
         - set(scope.version, "")
@@ -87,6 +88,8 @@ config:
     span_metrics:
       aggregation_temporality: AGGREGATION_TEMPORALITY_DELTA
       add_resource_attributes: true
+      dimensions:
+        - name: deployment.environment.name
       histogram:
         exponential: {}
         unit: s

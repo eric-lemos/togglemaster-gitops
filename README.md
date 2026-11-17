@@ -238,7 +238,9 @@ vem de `OTEL_SERVICE_NAME` e alimenta o painel de requisições HTTP do Grafana.
 - Antes do envio, o gateway remove atributos, eventos e mensagens de erro dos
   spans e substitui seus nomes por categorias genéricas. Apenas os nomes
   conhecidos dos serviços são preservados; outros são identificados como
-  `unknown`. A configuração prioriza privacidade em vez de detalhes de rota.
+  `unknown`. O ambiente `default` é atribuído aos novos traces e às métricas
+  derivadas para uso no APM. A configuração prioriza privacidade em vez de
+  detalhes de rota; traces anteriores continuam no ambiente original.
 - Logs continuam desligados nos SDKs (`OTEL_LOGS_EXPORTER=none`) e chegam ao
   Loki pelo agent; não são enviados ao Datadog.
 - O workflow **K8s Ops → Apply** cria `observability/datadog` a partir do
